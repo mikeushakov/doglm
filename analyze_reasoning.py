@@ -104,10 +104,13 @@ def game_file_from_reasoning(name):
 
 
 def parse_gamefile(gf):
-    m = re.match(r"game-(\d+)-(.+)-v\d+-(cued|uncued)-(.+)-run\d+\.html", gf)
+    # scheme: game-01-mail-courier-v2-1-<model>-run1.html
+    # condition token: 1 = uncued, 2 = cued
+    m = re.match(r"game-(\d+)-(.+)-v\d+-([12])-(.+)-run\d+\.html", gf)
     if not m:
         return {"item": "", "game_name": "", "condition": "", "model": ""}
-    item, name, cond, model = m.groups()
+    item, name, tok, model = m.groups()
+    cond = {"1": "uncued", "2": "cued"}[tok]
     return {"item": item, "game_name": name, "condition": cond, "model": model}
 
 

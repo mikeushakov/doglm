@@ -20,8 +20,10 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -43,7 +45,7 @@ JUDGE_MODEL = "mistralai/mistral-small-3.2-24b-instruct"
 
 TEMPERATURE = 1.0
 MAX_TOKENS = 32000
-JUDGE_MAX_TOKENS = 1000
+JUDGE_MAX_TOKENS = 2000
 REQUEST_TIMEOUT = 900  # seconds
 RETRY_ON_FAILURE = 1   # one retry per generation, per the pre-registered rule
 
@@ -122,16 +124,29 @@ def api_key():
 
 
 def parse_prd_filename(name):
-    """PRD-01-mail-courier-v1-uncued.md -> (01, mail-courier, v1, uncued)"""
-    m = re.match(r"PRD-(\d+)-(.+)-(v\d+)-(cued|uncued)\.md$", name)
+    """PRD-01-mail-courier-v2-1.md -> (01, mail-courier, v2, uncued)
+    Condition token: 1 = uncued, 2 = cued."""
+    m = re.match(r"PRD-(\d+)-(.+)-(v\d+)-([12])\.md$", name)
     if not m:
         return None
-    return m.group(1), m.group(2), m.group(3), m.group(4)
-
+    condition = {"1": "uncued", "2": "cued"}[m.group(4)]
+    return m.group(1), m.group(2), m.group(3), condition
+    
 
 def model_slug(model_id):
     """anthropic/claude-fable-5 -> claude-fable-5"""
     return model_id.split("/")[-1].lower().replace(".", "-")
+
+
+# Model-blind condition tokens used in the SAVED game filename, so a model
+# cannot read its experimental condition from the output-filename instruction.
+# uncued -> "1", cued -> "2".  Example: game-01-mail-courier-v2-2-<model>-run1.html
+CONDITION_TOKEN = {"uncued": "1", "cued": "2"}
+
+
+def game_filename(item, game_name, version, condition, model, run):
+    tok = CONDITION_TOKEN.get(condition, condition)
+    return f"game-{item}-{game_name}-{version}-{tok}-{model_slug(model)}-run{run}.html"
 
 
 def strip_fences(text):
@@ -144,8 +159,9 @@ def strip_fences(text):
     return t, False
 
 
-def call_openrouter(payload):
-    """One API call. Returns (response_json, latency_seconds)."""
+def call_openrouter(payload, max_retries=4):
+    """One API call with backoff on rate limits (429) and transient 5xx.
+    Returns (response_json, latency_seconds)."""
     headers = {
         "Authorization": f"Bearer {api_key()}",
         "Content-Type": "application/json",
@@ -153,11 +169,25 @@ def call_openrouter(payload):
         "X-Title": "Can You Pet the Dog benchmark",
     }
     t0 = time.time()
-    r = requests.post(API_URL, headers=headers, json=payload, timeout=REQUEST_TIMEOUT)
-    latency = round(time.time() - t0, 1)
-    if r.status_code != 200:
+    backoff = 5
+    for attempt in range(max_retries + 1):
+        r = requests.post(API_URL, headers=headers, json=payload, timeout=REQUEST_TIMEOUT)
+        if r.status_code == 200:
+            return r.json(), round(time.time() - t0, 1)
+        # Rate limited or transient server error: wait and retry.
+        if r.status_code in (429, 500, 502, 503, 529) and attempt < max_retries:
+            wait = backoff
+            ra = r.headers.get("Retry-After")
+            if ra:
+                try:
+                    wait = max(wait, int(float(ra)))
+                except ValueError:
+                    pass
+            time.sleep(wait)
+            backoff = min(backoff * 2, 60)
+            continue
         raise RuntimeError(f"HTTP {r.status_code}: {r.text[:400]}")
-    return r.json(), latency
+    raise RuntimeError("exhausted retries")
 
 
 def usage_fields(resp):
@@ -194,7 +224,7 @@ def generate_one(model, prd_path, run, temperature):
     item, game_name, version, condition = parsed
 
     prd_text = prd_path.read_text(encoding="utf-8")
-    game_file = GAME_DIR / f"game-{item}-{game_name}-{version}-{condition}-{model_slug(model)}-run{run}.html"
+    game_file = GAME_DIR / game_filename(item, game_name, version, condition, model, run)
 
     row = {f: "" for f in MANIFEST_FIELDS}
     row.update({
@@ -401,101 +431,142 @@ def judge_one(game_file):
 
 
 # ---------------------------------------------------------------------------
+# WORKER (one full job: generate + syntax-gate + judge)
+# ---------------------------------------------------------------------------
+
+def process_job(model, prd_path, run, temperature, do_judge):
+    """Generate one game and (optionally) score it. Returns a manifest row dict.
+    Safe to call from multiple threads: touches only its own files and the
+    shared GAME_DIR (distinct filenames per job)."""
+    row = generate_one(model, prd_path, run, temperature)
+    if not row:
+        return None
+    if do_judge and row.get("generation_ok") == "yes":
+        gf = GAME_DIR / row["game_file"]
+        syn_ok, syn_msg = syntax_check(gf)
+        if syn_ok is False:
+            row["syntax_ok"] = "no"
+            row["judge_model"] = JUDGE_MODEL
+            row["judge_score"] = FAILED_LABEL
+            row["judge_evidence"] = f"syntax error: {syn_msg}"
+            row["judge_cost_usd"] = ""
+        elif syn_ok is None and node_available():
+            row["syntax_ok"] = "review"
+            row["judge_model"] = JUDGE_MODEL
+            row["judge_score"] = FAILED_LABEL
+            row["judge_evidence"] = f"could not check: {syn_msg}"
+            row["judge_cost_usd"] = ""
+        else:
+            row["syntax_ok"] = "yes" if syn_ok else ""
+            score, evidence, jcost = judge_one(gf)
+            row["judge_model"] = JUDGE_MODEL
+            row["judge_score"] = score
+            row["judge_evidence"] = evidence
+            row["judge_cost_usd"] = jcost
+    return row
+
+
+# ---------------------------------------------------------------------------
 # MAIN
 # ---------------------------------------------------------------------------
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--model", required=True, help="OpenRouter model id, e.g. deepseek/deepseek-chat")
+    ap.add_argument("--model", required=True, nargs="+",
+                    help="one or more OpenRouter model ids, e.g. deepseek/deepseek-chat mistralai/mistral-small")
     ap.add_argument("--runs", type=int, default=1, help="generations per PRD")
     ap.add_argument("--prds", nargs="*", help="specific PRD filenames (default: all in prds/)")
     ap.add_argument("--temperature", type=float, default=TEMPERATURE)
+    ap.add_argument("--workers", type=int, default=4,
+                    help="parallel requests in flight (start low, 4-6, to respect rate limits)")
     ap.add_argument("--no-judge", action="store_true", help="generate only, skip scoring")
-    ap.add_argument("--judge-only", action="store_true", help="score existing games for this model, no generation")
+    ap.add_argument("--judge-only", action="store_true", help="score existing games, no generation")
     args = ap.parse_args()
 
     GAME_DIR.mkdir(exist_ok=True)
 
-    if args.prds:
-        prds = [PRD_DIR / p for p in args.prds]
-    else:
-        prds = sorted(PRD_DIR.glob("PRD-*.md"))
-    missing = [p for p in prds if not p.exists()]
-    if missing:
-        sys.exit(f"ERROR: PRD file(s) not found: {', '.join(str(p) for p in missing)}")
-    if not prds:
-        sys.exit(f"ERROR: no PRD files found in {PRD_DIR}/")
-
+    models = args.model
     rows = []
+    rows_lock = threading.Lock()
 
     if not node_available():
-        print("WARNING: Node.js not found; syntax_ok will be blank and no game will be marked BROKEN.")
+        print("WARNING: Node.js not found; syntax_ok will be blank and no game will be marked FAILED for syntax.")
 
     if args.judge_only:
-        pattern = f"game-*-{model_slug(args.model)}-run*.html"
-        for gf in sorted(GAME_DIR.glob(pattern)):
+        # Judge existing games for each model, in parallel.
+        jobs = []
+        for model in models:
+            pattern = f"game-*-{model_slug(model)}-run*.html"
+            for gf in sorted(GAME_DIR.glob(pattern)):
+                jobs.append((model, gf))
+        print(f"Judging {len(jobs)} existing game(s) across {len(models)} model(s), {args.workers} workers")
+
+        def judge_job(model, gf):
             syn_ok, syn_msg = syntax_check(gf)
             row = {
                 "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                "model": args.model, "game_file": gf.name,
-                "judge_model": JUDGE_MODEL,
+                "model": model, "game_file": gf.name, "judge_model": JUDGE_MODEL,
             }
             if syn_ok is False:
-                row["syntax_ok"] = "no"
-                row["judge_score"] = FAILED_LABEL
-                row["judge_evidence"] = f"syntax error: {syn_msg}"
-                row["judge_cost_usd"] = ""
+                row.update({"syntax_ok": "no", "judge_score": FAILED_LABEL,
+                            "judge_evidence": f"syntax error: {syn_msg}", "judge_cost_usd": ""})
                 print(f"  FAILED {gf.name} :{syn_msg}")
             elif syn_ok is None and node_available():
-                # Node is present but the file could not be checked (no <script>
-                # found, etc.). Do not silently score it; flag for manual review.
-                row["syntax_ok"] = "review"
-                row["judge_score"] = FAILED_LABEL
-                row["judge_evidence"] = f"could not check: {syn_msg}"
-                row["judge_cost_usd"] = ""
+                row.update({"syntax_ok": "review", "judge_score": FAILED_LABEL,
+                            "judge_evidence": f"could not check: {syn_msg}", "judge_cost_usd": ""})
                 print(f"  REVIEW {gf.name} :{syn_msg}")
             else:
-                row["syntax_ok"] = "yes" if syn_ok else ""
                 score, evidence, cost = judge_one(gf)
-                row["judge_score"] = score
-                row["judge_evidence"] = evidence
-                row["judge_cost_usd"] = cost
-                print(f"  JUDGE {gf.name} -> {score}  ({evidence[:70]})")
-            rows.append(row)
+                row.update({"syntax_ok": "yes" if syn_ok else "", "judge_score": score,
+                            "judge_evidence": evidence, "judge_cost_usd": cost})
+                print(f"  JUDGE {gf.name} -> {score}")
+            return row
+
+        with ThreadPoolExecutor(max_workers=args.workers) as ex:
+            futs = [ex.submit(judge_job, m, gf) for m, gf in jobs]
+            for fut in as_completed(futs):
+                r = fut.result()
+                if r:
+                    with rows_lock:
+                        rows.append(r)
     else:
-        print(f"Generating: {args.model}  |  {len(prds)} PRDs x {args.runs} run(s)  |  temp={args.temperature}")
-        for run in range(1, args.runs + 1):
-            for prd in prds:
-                print(f"[run {run}] {prd.name}")
-                row = generate_one(args.model, prd, run, args.temperature)
-                if not row:
+        if args.prds:
+            prds = [PRD_DIR / p for p in args.prds]
+        else:
+            prds = sorted(PRD_DIR.glob("PRD-*.md"))
+        missing = [p for p in prds if not p.exists()]
+        if missing:
+            sys.exit(f"ERROR: PRD file(s) not found: {', '.join(str(p) for p in missing)}")
+        if not prds:
+            sys.exit(f"ERROR: no PRD files found in {PRD_DIR}/")
+
+        # Build the full job list: every model x PRD x run.
+        jobs = [(model, prd, run)
+                for model in models
+                for run in range(1, args.runs + 1)
+                for prd in prds]
+        print(f"Generating {len(jobs)} game(s): {len(models)} model(s) x {len(prds)} PRDs x {args.runs} run(s), "
+              f"{args.workers} workers, temp={args.temperature}")
+
+        done = 0
+        total = len(jobs)
+        with ThreadPoolExecutor(max_workers=args.workers) as ex:
+            futs = {ex.submit(process_job, m, prd, run, args.temperature, not args.no_judge): (m, prd, run)
+                    for (m, prd, run) in jobs}
+            for fut in as_completed(futs):
+                m, prd, run = futs[fut]
+                done += 1
+                try:
+                    r = fut.result()
+                except Exception as e:
+                    print(f"  [{done}/{total}] ERROR {m} {prd.name}: {e}")
                     continue
-                if not args.no_judge and row.get("generation_ok") == "yes":
-                    gf = GAME_DIR / row["game_file"]
-                    syn_ok, syn_msg = syntax_check(gf)
-                    if syn_ok is False:
-                        row["syntax_ok"] = "no"
-                        row["judge_model"] = JUDGE_MODEL
-                        row["judge_score"] = FAILED_LABEL
-                        row["judge_evidence"] = f"syntax error: {syn_msg}"
-                        row["judge_cost_usd"] = ""
-                        print(f"  FAILED -> {syn_msg}")
-                    elif syn_ok is None and node_available():
-                        row["syntax_ok"] = "review"
-                        row["judge_model"] = JUDGE_MODEL
-                        row["judge_score"] = FAILED_LABEL
-                        row["judge_evidence"] = f"could not check: {syn_msg}"
-                        row["judge_cost_usd"] = ""
-                        print(f"  REVIEW -> {syn_msg}")
-                    else:
-                        row["syntax_ok"] = "yes" if syn_ok else ""
-                        score, evidence, jcost = judge_one(gf)
-                        row["judge_model"] = JUDGE_MODEL
-                        row["judge_score"] = score
-                        row["judge_evidence"] = evidence
-                        row["judge_cost_usd"] = jcost
-                        print(f"  JUDGE -> score {score}  ({evidence[:70]})")
-                rows.append(row)
+                if not r:
+                    continue
+                sc = r.get("judge_score", "")
+                print(f"  [{done}/{total}] {model_slug(m):22} {prd.name:34} -> {sc}")
+                with rows_lock:
+                    rows.append(r)
 
     # Append to manifest
     write_header = not MANIFEST.exists()
@@ -525,7 +596,7 @@ def main():
     broken = sum(1 for r in rows if str(r.get("judge_score")) == FAILED_LABEL)
 
     print("\n--- SUMMARY ---")
-    print(f"model:             {args.model}")
+    print(f"models:            {', '.join(models)}")
     print(f"games generated:   {ok} ok, {failed} failed")
     print(f"output tokens:     {out_tok:.0f}  (of which reasoning: {reas_tok:.0f})")
     print(f"generation cost:   ${gen_cost:.4f}")
