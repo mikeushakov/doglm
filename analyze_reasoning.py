@@ -1,0 +1,250 @@
+#!/usr/bin/env python3
+"""
+Reasoning-trace analysis for the "Can You Pet the Dog?" benchmark.
+
+Scans each model's reasoning trace and classifies whether the model's thinking
+shows any sign of considering player-dog interaction (petting, the dog reacting
+to the player, the player doing something TO the dog), as opposed to treating
+the dog only as movement/decoration.
+
+Judge: Claude Sonnet (nuance task). One call per reasoning file.
+Only CANONICAL files are analysed: names ending exactly in `.reasoning.txt`.
+Annotated/duplicate variants (e.g. `...reasoning-old-interesting.txt`) are skipped.
+
+Every quote the judge returns is verified to actually appear in the source file;
+unverified quotes are flagged rather than trusted.
+
+Output: reasoning_analysis.csv with one row per file, joined to the behavioural
+score from the merged manifest.
+
+Usage:
+    export OPENROUTER_API_KEY="sk-or-..."
+    python analyze_reasoning.py \
+        --reasoning-dir reasoning \
+        --manifest manifest_merged.csv \
+        --out reasoning_analysis.csv
+"""
+
+import argparse
+import csv
+import json
+import os
+import re
+import sys
+import time
+from pathlib import Path
+
+import requests
+
+API_URL = "https://openrouter.ai/api/v1/chat/completions"
+JUDGE_MODEL = "anthropic/claude-sonnet-4-6"   # verify exact ID on openrouter.ai/models
+JUDGE_MAX_TOKENS = 600
+REQUEST_TIMEOUT = 300
+
+OUT_FIELDS = [
+    "reasoning_file", "game_file", "model", "item", "game_name", "condition",
+    "behavioral_score", "category", "quote", "quote_verified", "rationale",
+    "judge_cost_usd",
+]
+
+SYSTEM = """You analyse a language model's chain-of-thought (its "reasoning trace") that was produced while it wrote a small 2D browser game. The game's specification mentioned that a dog is present in the game world, but NEVER asked for any way for the player to interact with the dog.
+
+Your job: decide whether, anywhere in this reasoning trace, the model shows a sign of considering PLAYER-DOG INTERACTION. That means the player doing something to the dog, or the dog responding to the player: petting, patting, the dog reacting when approached or clicked, "the player could interact with the dog", "should the dog react", hearts, a pet action, etc.
+
+Classify into exactly one category:
+
+"considered" — the trace shows a genuine sign that the model thought about the player interacting with the dog, or the dog responding to the player, even briefly, even if it then dropped the idea. This is the category you are hunting for.
+
+"mechanical_only" — the words "interaction", "interact", "follow", etc. appear, BUT they refer only to the dog's MOVEMENT relative to the player (following distance, trailing, collision, spacing, wandering). This is NOT player-dog interaction in our sense. IMPORTANT NEGATIVE EXAMPLE: "I need to be mindful about the player-dog interaction. The dog follows the player." — this is mechanical_only, because it is about following behaviour, not about the player petting or the dog reacting.
+
+"not_considered" — the dog is discussed only as something to draw, position, or move, or is barely mentioned; no hint of player-dog interaction at all.
+
+Rules for the quote:
+- For "considered" and "mechanical_only", return the single most relevant sentence VERBATIM from the trace (copy it exactly, character for character, no paraphrasing, one sentence).
+- For "not_considered", return an empty string for the quote.
+
+Respond with a single JSON object and nothing else:
+{"category": "considered|mechanical_only|not_considered", "quote": "<verbatim sentence or empty>", "rationale": "<one sentence explaining the classification>"}"""
+
+USER_TEMPLATE = """Reasoning trace to analyse:
+
+<trace>
+{trace}
+</trace>"""
+
+
+def api_key():
+    k = os.environ.get("OPENROUTER_API_KEY")
+    if not k:
+        sys.exit("ERROR: set OPENROUTER_API_KEY first.")
+    return k
+
+
+def call(payload):
+    headers = {
+        "Authorization": f"Bearer {api_key()}",
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://petthedog.mikeushakov.com",
+        "X-Title": "Can You Pet the Dog benchmark - reasoning analysis",
+    }
+    r = requests.post(API_URL, headers=headers, json=payload, timeout=REQUEST_TIMEOUT)
+    if r.status_code != 200:
+        raise RuntimeError(f"HTTP {r.status_code}: {r.text[:300]}")
+    return r.json()
+
+
+def is_canonical(path):
+    """True only for names ending exactly in '.reasoning.txt'."""
+    return path.name.endswith(".reasoning.txt")
+
+
+def game_file_from_reasoning(name):
+    """game-01-...-run1.reasoning.txt -> game-01-...-run1.html"""
+    return name[:-len(".reasoning.txt")] + ".html"
+
+
+def parse_gamefile(gf):
+    m = re.match(r"game-(\d+)-(.+)-v\d+-(cued|uncued)-(.+)-run\d+\.html", gf)
+    if not m:
+        return {"item": "", "game_name": "", "condition": "", "model": ""}
+    item, name, cond, model = m.groups()
+    return {"item": item, "game_name": name, "condition": cond, "model": model}
+
+
+def normalize(s):
+    """Collapse whitespace and fold curly quotes for substring verification."""
+    s = (s or "").translate(str.maketrans({"\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '"'}))
+    return re.sub(r"\s+", " ", s).strip().lower()
+
+
+def load_scores(manifest_path):
+    """Map game_file -> behavioural judge_score from the merged manifest."""
+    scores = {}
+    if not Path(manifest_path).exists():
+        return scores
+    with open(manifest_path, newline="", encoding="utf-8") as f:
+        for r in csv.DictReader(f):
+            gf = r.get("game_file") or ""
+            if gf:
+                scores[gf] = r.get("judge_score", "")
+    return scores
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--reasoning-dir", default="reasoning")
+    ap.add_argument("--manifest", default="manifest_merged.csv")
+    ap.add_argument("--out", default="reasoning_analysis.csv")
+    args = ap.parse_args()
+
+    rdir = Path(args.reasoning_dir)
+    if not rdir.is_dir():
+        sys.exit(f"ERROR: reasoning dir not found: {rdir}")
+
+    all_txt = sorted(rdir.glob("*.txt"))
+    canonical = [p for p in all_txt if is_canonical(p)]
+    skipped = [p for p in all_txt if not is_canonical(p)]
+
+    print(f"reasoning files: {len(all_txt)} total, {len(canonical)} canonical, {len(skipped)} skipped")
+    if skipped:
+        print("skipped (non-canonical):")
+        for p in skipped:
+            print(f"  {p.name}")
+
+    scores = load_scores(args.manifest)
+    rows = []
+    total_cost = 0.0
+
+    for i, path in enumerate(canonical, 1):
+        gf = game_file_from_reasoning(path.name)
+        meta = parse_gamefile(gf)
+        trace = path.read_text(encoding="utf-8", errors="replace")
+
+        payload = {
+            "model": JUDGE_MODEL,
+            "messages": [
+                {"role": "system", "content": SYSTEM},
+                {"role": "user", "content": USER_TEMPLATE.format(trace=trace)},
+            ],
+            "temperature": 0,
+            "max_tokens": JUDGE_MAX_TOKENS,
+            "usage": {"include": True},
+        }
+
+        category, quote, rationale, verified, cost = "", "", "", "", ""
+        try:
+            resp = call(payload)
+            msg = (resp.get("choices") or [{}])[0].get("message", {}).get("content", "") or ""
+            cost = (resp.get("usage") or {}).get("cost", "")
+            try:
+                total_cost += float(cost)
+            except (TypeError, ValueError):
+                pass
+            m = re.search(r"\{.*\}", msg, re.S)
+            if m:
+                verdict = json.loads(m.group(0))
+                category = verdict.get("category", "")
+                quote = str(verdict.get("quote", ""))
+                rationale = str(verdict.get("rationale", ""))
+                # Verify the quote actually appears in the trace.
+                if category == "not_considered" or quote == "":
+                    verified = "n/a"
+                else:
+                    verified = "yes" if normalize(quote) in normalize(trace) else "NO"
+            else:
+                rationale = f"non-JSON judge output: {msg[:120]}"
+        except Exception as e:
+            rationale = f"error: {e}"[:200]
+
+        flag = "" if verified in ("yes", "n/a", "") else "  <-- QUOTE NOT FOUND, review"
+        print(f"[{i}/{len(canonical)}] {meta['model']:20} {meta['game_name']:14} {meta['condition']:7} "
+              f"-> {category or 'ERR':16} score={scores.get(gf,'?')}{flag}")
+
+        rows.append({
+            "reasoning_file": path.name,
+            "game_file": gf,
+            "model": meta["model"],
+            "item": meta["item"],
+            "game_name": meta["game_name"],
+            "condition": meta["condition"],
+            "behavioral_score": scores.get(gf, ""),
+            "category": category,
+            "quote": quote,
+            "quote_verified": verified,
+            "rationale": rationale,
+            "judge_cost_usd": cost,
+        })
+        time.sleep(0.3)
+
+    with open(args.out, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=OUT_FIELDS, extrasaction="ignore")
+        w.writeheader()
+        for r in rows:
+            w.writerow(r)
+
+    # Summary
+    from collections import Counter
+    cats = Counter(r["category"] for r in rows)
+    unver = [r for r in rows if r["quote_verified"] == "NO"]
+    considered = [r for r in rows if r["category"] == "considered"]
+
+    print("\n--- SUMMARY ---")
+    print(f"files analysed:    {len(rows)}")
+    for c in ("considered", "mechanical_only", "not_considered"):
+        print(f"  {c:16} {cats.get(c, 0)}")
+    if cats.get("", 0):
+        print(f"  {'(errors)':16} {cats.get('', 0)}")
+    print(f"total judge cost:  ${total_cost:.4f}")
+    if considered:
+        print("\nCONSIDERED (the interesting ones):")
+        for r in considered:
+            print(f"  {r['model']} {r['game_name']} {r['condition']} (score {r['behavioral_score']}): {r['quote'][:100]}")
+    if unver:
+        print("\nUNVERIFIED QUOTES (judge quote not found in trace, review by hand):")
+        for r in unver:
+            print(f"  {r['reasoning_file']}: {r['quote'][:80]}")
+    print(f"\nwritten: {args.out}")
+
+
+if __name__ == "__main__":
+    main()

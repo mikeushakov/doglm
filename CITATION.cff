@@ -1,0 +1,23 @@
+cff-version: 1.2.0
+message: "If you use DogLM, please cite it as below."
+title: "DogLM: an open benchmark for spontaneous pet-the-dog mechanics in LLM-generated games"
+abstract: >-
+  DogLM measures whether a large language model, asked to generate a video game
+  that contains a dog but given no instruction about the dog, spontaneously lets
+  the player pet it. Each model generates small browser games from product
+  requirements documents that mention a dog only as background; the generated
+  code is then scored for whether the player can interact with the dog.
+authors:
+  - family-names: Ushakov
+    given-names: Mike
+type: software
+version: "1.0.0"
+date-released: "2026-07-16"
+license: MIT
+repository-code: "https://github.com/mikeushakov/doglm"
+keywords:
+  - large-language-models
+  - benchmark
+  - evaluation
+  - game-design
+  - implicit-norms
