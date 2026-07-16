@@ -71,16 +71,15 @@ python run_benchmark.py --model deepseek/deepseek-chat --runs 5
 
 ### Running several models
 
-Loop over model IDs, one per line:
+Pass multiple model IDs to `--model`; they run in parallel:
 
-```bash
-for m in \
-  "anthropic/claude-fable-5" \
-  "openai/gpt-5.6-sol" \
-  "google/gemini-3.1-pro-preview" ; do
-  python run_benchmark.py --model "$m" --runs 1
-done
-```
+​```bash
+python run_benchmark.py \
+  --model anthropic/claude-fable-5 openai/gpt-5.6-sol google/gemini-3.1-pro-preview \
+  --runs 1 --workers 6
+​```
+
+All model-by-PRD-by-run jobs are distributed across `--workers` parallel requests. Results are written to `manifest.csv` once at the end. If you see frequent HTTP 429 (rate limit) messages, lower `--workers`.
 
 ### Useful flags
 
@@ -89,6 +88,7 @@ done
 - `--no-judge` — generate only, skip scoring
 - `--judge-only` — re-score a model's existing games without regenerating (used after editing the rubric)
 - `--temperature T` — sampling temperature (default 1.0; not comparable across providers)
+- `--workers N` — number of parallel requests in flight (default 4; start low, 4-6, to respect provider rate limits)
 
 The judge model is set by the `JUDGE_MODEL` constant near the top of `run_benchmark.py`.
 
