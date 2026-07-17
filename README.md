@@ -101,8 +101,9 @@ If you see frequent HTTP 429 (rate limit) messages, lower `--workers`.
 - `--temperature T` — sampling temperature (default 1.0)
 - `--workers N` — number of parallel requests in flight (default 4; start low, 4-6, to respect provider rate limits)
 
-The judge model is set by the `JUDGE_MODEL` constant near the top of `run_benchmark.py`.
-The judge rubric is set in 'JUDGE_SYSTEM' constant in the same script. 
+The judge model is set by the `JUDGE_MODEL` constant near the top of `run_benchmark.py`. 
+Use a cheaper model: the generated games are short and relatively easy to parse.
+The judge rubric prompt is set in 'JUDGE_SYSTEM' constant in the same script. 
 
 ## Reading the output
 
@@ -120,19 +121,21 @@ The judge rubric is set in 'JUDGE_SYSTEM' constant in the same script.
 
 ## Reasoning-trace analysis
 
-For models that expose reasoning tokens, `analyze_reasoning.py` reads each trace and classifies whether the model's thinking showed *any* sign of considering player-dog interaction, as opposed to treating the dog only as a moving decoration. It distinguishes model's consideration to add the pet-the-dog mechanic from model's reasoning on mechanical movements of the dog (following distance, collision), verifies every quote against the source trace, and joins each result to the game's score.
-
-The script classifies each reasoning file into three categories: 
-- **considered**: The reasoning trace shows a sign of thinking about the player interacting with the dog, or the dog responding to the player, *even if the idea is then dropped*. Examples: explicit and visible pet-the-dog mechanic, the dog reacting when approached or clicked, "the player could interact with the dog". The interaction must have the dog as its object; interaction language about houses, crops, doors, gems, or the goal mechanic does not count.
-- **mechanical_only**: Interaction or movement words appear in the reasoning trace but refer *only* to the dog's movement relative to the player. Examples: following distance, trailing, collision, spacing, wandering. This is the false-positive class; for example, "I need to be mindful about the player-dog interaction. The dog follows the player" is classified as *mechanical_only*, because it concerns player-dog-following behavior, and not dog's reaction to the player's action.
-- **not_considered**: The dog is discussed only as an object that game has to draw, position, or move, or is barely mentioned. Limitation: some models return not the full version of their reasoning trace, but a shortened / summarized version of it, so it is possible that the model can generate pet-the-dog interaction in the game, but won't mention it in the reasoning trace. 
-
+For models that expose reasoning tokens, `analyze_reasoning.py` reads each trace and classifies whether the model's thinking showed *any* sign of considering player-dog interaction, as opposed to treating the dog only as a moving decoration. It distinguishes model's consideration to add the pet-the-dog mechanic from model's reasoning on mechanical movements of the dog, verifies every quote against the source trace, and joins each result to the game's score ('behavioral_score' in the output file).
 
 ```bash
 python analyze_reasoning.py --reasoning-dir reasoning --manifest manifest.csv --out reasoning_analysis.csv
 ```
 
-The classifier judge is set at the top of the script. The classification prompt is a starting point, not a final instrument: it can be tuned for a better detection of a model's implicit intent to add dog-related mechanics to the generated game.
+The script classifies each reasoning file into three categories: 
+- **considered**: The reasoning trace shows the model thinking about the player interacting with the dog, or the dog responding to the player, *even if the idea is then dropped*.
+- **mechanical_only**: Interaction or movement words appear in the reasoning trace but refer *only* to the dog's movement relative to the player. 
+- **not_considered**: The dog is mentioned in reasoning trace only as an object that game has to draw, position, or move, or is barely mentioned. 
+
+NOTE: some models return not the full version of their reasoning trace, but a shortened / summarized version of it. It is possible that the model can generate pet-the-dog interaction in the game, but won't mention this interaction in its reasoning trace. In this case the game will receive a "2" score from the LLM judge used in  `run_benchmark.py`, but also a "not_considered" grade by `analyze_reasoning.py`. The opposite outcome is also an expected behavior: the model may consider pet-the-dog interaction in reasoning, but then may suppress the idea of dog petting and generate a game without it.
+
+The classifier judge model is set at the top of `analyze_reasoning.py` by the JUDGE_MODEL constant.
+The changes in classification prompt can be done for a better detection of a model's implicit intent to add dog-related mechanics to the generated game.
 
 ## Adding or changing models
 
