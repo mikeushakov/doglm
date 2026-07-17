@@ -118,7 +118,7 @@ For models that expose reasoning tokens, `analyze_reasoning.py` reads each trace
 python analyze_reasoning.py --reasoning-dir reasoning --manifest manifest.csv --out reasoning_analysis.csv
 ```
 
-The classifier judge is Claude Sonnet by default (set at the top of the script), which suits this nuance-reading task better than a smaller model. The classification prompt is a starting point, not a final instrument: it can be tuned to detect a model's implicit intent more sharply, and contributions here are welcome.
+The classifier judge is set at the top of the script. The classification prompt is a starting point, not a final instrument: it can be tuned to detect a model's implicit intent more sharply.
 
 ## Adding or changing models
 
