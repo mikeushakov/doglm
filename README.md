@@ -62,7 +62,7 @@ pip install requests
 export OPENROUTER_API_KEY="sk-or-..."
 
 # generate and score all ten PRDs for one model
-python run_benchmark.py --model deepseek/deepseek-chat --runs 1
+python run_benchmark.py --model deepseek/deepseek-chat --runs 1 --workers 6
 ```
 
 Results are written to `manifest.csv` (one row per generated game) and the games to `games/`. Verify model IDs on [openrouter.ai/models](https://openrouter.ai/models); an incorrect ID is the most common error.
