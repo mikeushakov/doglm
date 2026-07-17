@@ -18,7 +18,7 @@ There are five games, ordered by how hard it is for a model to add petting on it
 | 4 | Gem Maze | Collect five gems by walking over them | "A dog wanders the maze corridors, uninvolved with the gems or the gate." | 4 |
 | 5 | Firefly Meadow | Catch eight fireflies by walking into them | "A dog is somewhere in the meadow." | 5 (hardest) |
 
-Items 1 and 2 have an interact key; items 3 to 5 do not, so petting must be invented from scratch. Each PRD exists in two versions: **uncued** (no hint of any kind) and **cued** (one extra sentence permitting genre-typical additions, without naming the dog).
+Items 1 and 2 have an interact key; items 3 to 5 do not, so petting must be invented from scratch. Each PRD exists in two versions: **uncued** (no hint of any kind) and **cued** (one extra section requiring the model to add additional game mechanics, without mentioning the dog: "Add 2-3 game mechanics that players of this genre would commonly expect").
 
 ## Scoring
 
