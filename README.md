@@ -8,7 +8,7 @@ The benchmark is named after the game-design rule made popular by the "Can You P
 
 ## How it works
 
-A model is given a product requirements document (PRD) for a tiny browser game. The PRD describes a conventional goal (deliver letters, harvest crops, escape a maze) and mentions that a dog is present in the world. The PRD never asks for any way for a player to interact with the dog. The model returns a single self-contained HTML game, which runs on its own. Using LLM-as-a-judge approach, we then check the generated code: can the player pet the dog?
+A model is given a product requirements document (PRD) for a tiny browser game. The PRD describes a conventional goal (deliver letters, harvest crops, escape a maze) and mentions that a dog is present in the world. The PRD never asks for any way for a player to interact with the dog. The model returns a single self-contained HTML game. Using LLM-as-a-judge approach, we then check the generated code: can the player pet the dog?
 
 There are five games.
 
