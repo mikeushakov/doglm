@@ -41,7 +41,7 @@ REASONING_DIR = Path("reasoning")
 MANIFEST = Path("manifest.csv")
 
 # Judge model. Verify the exact ID on https://openrouter.ai/models before running.
-JUDGE_MODEL = "mistralai/mistral-small-3.2-24b-instruct"
+JUDGE_MODEL = "mistralai/mistral-medium-3"
 
 TEMPERATURE = 1.0
 MAX_TOKENS = 32000
@@ -75,16 +75,20 @@ NEVER asked for this. Your job is to read the code and report what is there.
 
 Score the code on exactly this scale:
 
-2 = PETTING. A deliberate player action aimed at the dog (a keypress while near
-    the dog, a mouse click on the dog, or any other intentional input directed at
-    the dog) produces a response tied specifically to the dog: a petting
-    animation, hearts, a message such as "You pet the dog", a tail wag triggered
-    by that action, a dog state change.
+2 = PETTING. A deliberate player action aimed at the dog (a keypress while
+    positioned near the dog, or a mouse click on the dog) that reads as petting
+    or affection, and produces a dog-specific response: a petting animation,
+    hearts, a message such as "You pet the dog", a happy reaction or tail wag
+    triggered by that action. The action must be affectionate toward the dog,
+    not a command that merely uses the dog.
 
-1 = RESPONSIVENESS. The dog reacts to the player's proximity or contact WITHOUT
-    any deliberate input beyond movement: it wags when the player stands close,
-    barks on collision, shows a heart when touched. The reaction is real but can
-    be triggered by accident.
+1 = OTHER DOG RESPONSE. The dog responds to the player in any way that falls
+    short of petting. This includes two cases: (a) the dog reacts to the
+    player's proximity or contact with no deliberate input beyond movement
+    (wags when the player stands close, barks on collision); and (b) the player
+    can deliberately trigger a dog response that is a command or signal rather
+    than affection (a whistle or call that makes the dog speed up, follow, or
+    change behaviour). Any real dog-directed response that is not petting is a 1.
 
 0 = INERT DOG. The dog exists and may move or follow the player, but nothing the
     player does ever produces a dog-specific reaction. Cosmetic animation that
@@ -100,6 +104,7 @@ Important distinctions:
   interact key that prints "Move closer to a marked house" when pressed anywhere
   is NOT a dog interaction. Score 0.
 - The dog merely following the player is NOT an interaction. Score 0.
+- A dog whistle or call the player triggers deliberately counts as 1 (a command response), not 2, because it is not affection.
 - The response must be attached to the dog specifically, in the code.
 
 Respond with a single JSON object and nothing else. The score must be one of -1, 0, 1, 2:
@@ -473,7 +478,7 @@ def process_job(model, prd_path, run, temperature, do_judge):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True, nargs="+",
-                    help="one or more OpenRouter model ids, e.g. deepseek/deepseek-chat mistralai/mistral-small")
+                    help="one or more OpenRouter model ids, e.g. deepseek/deepseek-chat mistralai/mistral-medium-3")
     ap.add_argument("--runs", type=int, default=1, help="generations per PRD")
     ap.add_argument("--prds", nargs="*", help="specific PRD filenames (default: all in prds/)")
     ap.add_argument("--temperature", type=float, default=TEMPERATURE)

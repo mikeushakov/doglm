@@ -2,13 +2,14 @@
 
 An open benchmark measuring whether an LLM, asked to generate a video game that contains a dog but given no instruction about the dog, spontaneously lets the player pet it.
 
-The benchmark is named after the game-design rule made popular by the "Can You Pet the Dog?" project ([X](https://x.com/CanYouPetTheDog), [Bluesky](https://bsky.app/profile/canyoupetthedog.com)): if a game has a dog, players expect to pet it. Good games let them, yet no one writes this into a specification. DogLM tests whether a model applies the rule on its own.
+The benchmark is named after the game-design rule made popular by the "Can You Pet the Dog?" project ([X](https://x.com/CanYouPetTheDog), [Bluesky](https://bsky.app/profile/canyoupetthedog.com)): if a game has a dog, player should be able to pet it. DogLM tests whether a model applies the rule.
 
-## What it measures
+## How it works
 
-A model is given a product requirements document (PRD) for a tiny browser game. The PRD describes a conventional goal (deliver letters, harvest crops, escape a maze) and mentions, in one sentence, that a dog is present in the world. The PRD never asks for any way to interact with the dog. The model returns a single self-contained HTML game, which runs on its own with no further model calls. We then check the generated code: can the player pet the dog?
+A model is given a product requirements document (PRD) for a tiny browser game. The PRD describes a conventional goal (deliver letters, harvest crops, escape a maze) and mentions that a dog is present in the world. The PRD never asks for any way for a player to interact with the dog. The model returns a single self-contained HTML game, which runs on its own. Using LLM-as-a-judge approach, we then check the generated code: can the player pet the dog?
 
-There are five games, ordered by how hard it is for a model to add petting on its own. Difficulty rises along two axes: whether the game already has an interact key (a keyboard button that triggers an action near an object), and how the dog is described, from a close companion down to a barely-present background figure.
+There are five games.
+
 
 | # | Game | Goal | Dog description | Difficulty |
 |---|------|------|-----------------|------------|
@@ -18,15 +19,15 @@ There are five games, ordered by how hard it is for a model to add petting on it
 | 4 | Gem Maze | Collect five gems by walking over them | "A dog wanders the maze corridors, uninvolved with the gems or the gate." | 4 |
 | 5 | Firefly Meadow | Catch eight fireflies by walking into them | "A dog is somewhere in the meadow." | 5 (hardest) |
 
-Items 1 and 2 have an interact key; items 3 to 5 do not, so petting must be invented from scratch. Each PRD exists in two versions: **uncued** (no hint of any kind) and **cued** (one extra section requiring the model to add additional game mechanics, without mentioning the dog: "Add 2-3 game mechanics that players of this genre would commonly expect").
+Items 1 and 2 have an interact key; items 3 to 5 do not, so pet-the-dog mechanics must be invented by the model from scratch. Each PRD exists in two versions: **uncued** (no hint of any kind) and **cued** (one extra section requiring the model to add additional game mechanics, without mentioning the dog: "Add 2-3 game mechanics that players of this genre would commonly expect").
 
 ## Scoring
 
 Each generated game is scored on the dog:
 
-- **2** — the player can pet the dog: a deliberate action aimed at the dog (a keypress near it, a click on it) produces a dog-specific response (a message, hearts, a triggered animation).
-- **1** — the dog reacts to the player's presence or contact without any deliberate input (wags when near, barks on collision). An interaction, but a weaker one.
-- **0** — the dog exists and moves, but nothing the player does reaches it.
+- **2** — You can pet the dog. A deliberate, affectionate action aimed at the dog (a keypress near it, a click on it) produces a dog-specific response (hearts, a happy reaction, a message like "You pet the dog"). The action must read as affection, not a command.
+- **1** — The dog is interactive, but you can't pet it. Any other dog response to the player short of petting: the dog reacts to proximity or contact with no deliberate input (wags when near, barks on collision), or the player can deliberately trigger a command-type response (a whistle or call that makes the dog follow or speed up).
+- **0** — The dog and the player do not interact at all. The dog exists and moves, but nothing the player does reaches it.
 
 Two non-numeric states are excluded from scoring rather than counted:
 
@@ -38,11 +39,12 @@ Scoring is done by an LLM judge that reads the game's source and returns a score
 ## Repository contents
 
 ```
-run_benchmark.py       generate games from PRDs and score them
-analyze_reasoning.py   optional: analyse models' reasoning traces
+run_benchmark.py       main script: generate games from PRDs and score them
+analyze_reasoning.py   optional script: analyse models' reasoning traces
 prds/                  the ten PRDs (five games x uncued/cued)
 CITATION.cff           how to cite this repository
 README.md              this file
+LICENSE                the license file
 ```
 
 ## Requirements
@@ -66,14 +68,14 @@ Results are written to `manifest.csv` (one row per generated game) and the games
 **By default each game is generated once.** A single generation is one sample of a variable behaviour. For robust results, raise `--runs` to generate and score each game several times:
 
 ```bash
-python run_benchmark.py --model deepseek/deepseek-chat --runs 5
+python run_benchmark.py --model deepseek/deepseek-chat --runs 5 --workers 6
 ```
 
 ### Running several models
 
 Pass multiple model IDs to `--model`; they run in parallel:
 
-​```bash
+​```
 python run_benchmark.py \
   --model anthropic/claude-fable-5 openai/gpt-5.6-sol google/gemini-3.1-pro-preview \
   --runs 1 --workers 6
