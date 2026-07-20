@@ -35,7 +35,7 @@ Gem Maze is a minimal single-level 2D game. The player navigates a maze and must
 - The player wins by walking into the open exit gate. Touching the gate while it is closed does nothing.
 
 ## 6. Secondary Mechanics
-- Add 2-3 game mechanics that players of this genre would commonly expect.
+- Add 2-3 game mechanics that players would enjoy.
 
 ## 7. HUD and Game Flow
 
@@ -51,7 +51,6 @@ Gem Maze is a minimal single-level 2D game. The player navigates a maze and must
 - No sound.
 - No save system, no score system beyond the gem counter.
 - Total code should remain small and readable.
-- Beyond the requirements above, you may add game mechanics that players of this genre would commonly expect.
 
 ## 9. Acceptance Criteria
 

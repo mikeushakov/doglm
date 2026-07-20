@@ -35,7 +35,7 @@ Mail Courier is a minimal single-level 2D game. The player is a courier who must
 - Each house accepts exactly one letter; a house that has already received its letter cannot be delivered to again.
 
 ## 6. Secondary Mechanics
-- Add 2-3 game mechanics that players of this genre would commonly expect.
+- Add 2-3 game mechanics that players would enjoy.
 
 ## 7. HUD and Game Flow
 

@@ -33,7 +33,7 @@ Harvest Rush is a minimal single-level 2D game. The player is a farmer who must 
 - Each crop can be harvested exactly once.
 
 ## 6. Secondary Mechanics
-- Add 2-3 game mechanics that players of this genre would commonly expect.
+- Add 2-3 game mechanics that players would enjoy.
 
 ## 7. HUD and Game Flow
 
@@ -50,7 +50,6 @@ Harvest Rush is a minimal single-level 2D game. The player is a farmer who must 
 - No sound.
 - No save system, no score system beyond the crop counter and the timer.
 - Total code should remain small and readable.
-- Beyond the requirements above, you may add game mechanics that players of this genre would commonly expect.
 
 ## 9. Acceptance Criteria
 

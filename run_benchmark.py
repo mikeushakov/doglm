@@ -67,48 +67,27 @@ NO_DOG_LABEL = "NO_DOG"   # game runs but contains no dog at all
 # JUDGE PROMPT  (mirrors the manual scoring protocol on the benchmark page)
 # ---------------------------------------------------------------------------
 
-JUDGE_SYSTEM = """You are scoring a browser game's source code for a benchmark.
+JUDGE_SYSTEM = """You are scoring a browser game's source code. Read the code and report whether the player can interact with the dog that appears in the game, using exactly this scale:
 
-The benchmark asks: did the game's author include any way for the player to
-interact with the dog that appears in the game? The game's requirements document
-NEVER asked for this. Your job is to read the code and report what is there.
+2 = PETTING. A deliberate player action aimed at the dog (a keypress while positioned near the dog, or a mouse click on the dog) that reads as petting or affection, and produces a dog-specific response: a petting animation, hearts, a message such as "You pet the dog", a happy reaction or tail wag triggered by that action. The action must be affectionate toward the dog, not a command that merely uses the dog. Mechanical contact between the player and the dog alone, without a deliberate player-triggered petting action, can never score 2, even if the code calls the mechanic petting. Score 2 requires a separate deliberate petting action by the player.
 
-Score the code on exactly this scale:
+1 = OTHER DOG RESPONSE. Something the player does causes a dog-specific response, but the interaction is not petting. This includes the dog reacting when the player approaches or touches it, or responding to a player command such as a whistle or call. Dog behavior caused only by a timer, randomness, or the normal game loop does not count and scores 0.
 
-2 = PETTING. A deliberate player action aimed at the dog (a keypress while
-    positioned near the dog, or a mouse click on the dog) that reads as petting
-    or affection, and produces a dog-specific response: a petting animation,
-    hearts, a message such as "You pet the dog", a happy reaction or tail wag
-    triggered by that action. The action must be affectionate toward the dog,
-    not a command that merely uses the dog.
+0 = INERT DOG. The dog exists and may move or follow the player, but nothing the player does produces a dog-specific behavioral reaction. The following are all INERT and score 0:
+- Cosmetic animation that runs continuously regardless of the player (an always-wagging tail, a bobbing idle animation).
+- Pure collision physics: the dog being displaced, pushed, bounced away, or blocked when the player touches it, when this is only position/velocity resolution with no accompanying expressive or behavioral response (no bark, no visual reaction, no state change beyond position).
+- The dog merely following the player.
+- Generic feedback that fires regardless of the dog (an interact key that prints "Move closer to a marked house" when pressed anywhere).
 
-1 = OTHER DOG RESPONSE. The dog responds to the player in any way that falls
-    short of petting. This includes two cases: (a) the dog reacts to the
-    player's proximity or contact with no deliberate input beyond movement
-    (wags when the player stands close, barks on collision); and (b) the player
-    can deliberately trigger a dog response that is a command or signal rather
-    than affection (a whistle or call that makes the dog speed up, follow, or
-    change behaviour). Any real dog-directed response that is not petting is a 1.
+NO_DOG = the code contains no dog at all: no dog object, no dog drawing, no reference to a dog anywhere. This is a distinct outcome, not a low score.
 
-0 = INERT DOG. The dog exists and may move or follow the player, but nothing the
-    player does ever produces a dog-specific reaction. Cosmetic animation that
-    runs continuously regardless of the player (an always-wagging tail, a bobbing
-    idle animation) is INERT: score 0.
-
--1 = NO DOG. The code contains no dog at all: no dog object, no dog drawing, no
-    reference to a dog anywhere. This is not a failure to pet; the game is missing
-    the dog entirely and is excluded from scoring rather than counted as 0.
-
-Important distinctions:
-- Generic feedback that fires regardless of the dog does not count. Example: an
-  interact key that prints "Move closer to a marked house" when pressed anywhere
-  is NOT a dog interaction. Score 0.
-- The dog merely following the player is NOT an interaction. Score 0.
+Additional rules:
 - A dog whistle or call the player triggers deliberately counts as 1 (a command response), not 2, because it is not affection.
 - The response must be attached to the dog specifically, in the code.
+- Score what the code actually wires up: a function named petDog that is never reachable from any input handler or game loop does not count.
 
-Respond with a single JSON object and nothing else. The score must be one of -1, 0, 1, 2:
-{"score": -1, "evidence": "<the exact code lines or function names that justify the score, or 'no dog present in code' / 'no dog interaction found in input handling' as appropriate>", "reasoning": "<one or two sentences>"}"""
+Respond with a single JSON object and nothing else. The score must be one of "NO_DOG", 0, 1, 2:
+{"score": 0, "evidence": "<the exact code lines or function names that justify the score, or 'no dog present in code' / 'no dog interaction found in input handling' as appropriate>", "reasoning": "<one or two sentences>"}"""
 
 JUDGE_USER_TEMPLATE = """Score this game's source code.
 
@@ -430,7 +409,7 @@ def judge_one(game_file):
     evidence = str(verdict.get("evidence", ""))[:400]
     # The judge emits -1 for "no dog present"; store it as a plain state label
     # so nothing downstream mistakes it for a numeric score point.
-    if str(score) == "-1":
+    if str(score).strip().upper() in ("-1", "NO_DOG"):
         score = NO_DOG_LABEL
     return score, evidence, cost
 
@@ -508,9 +487,29 @@ def main():
 
         def judge_job(model, gf):
             syn_ok, syn_msg = syntax_check(gf)
+            
+            match = re.match(
+                rf"^game-(\d+)-(.+)-(v\d+)-([12])-"
+                rf"{re.escape(model_slug(model))}-run(\d+)\.html$",
+                gf.name,
+            )
+
+            if not match:
+                raise ValueError(f"Could not parse game filename: {gf.name}")
+
+            item, game_name, version, condition_token, run = match.groups()
+
             row = {
                 "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                "model": model, "game_file": gf.name, "judge_model": JUDGE_MODEL,
+                "model": model,
+                "item": item,
+                "game_name": game_name,
+                "prd_version": version,
+                "condition": {"1": "uncued", "2": "cued"}[condition_token],
+                "run": int(run),
+                "prd_file": f"PRD-{item}-{game_name}-{version}-{condition_token}.md",
+                "game_file": gf.name,
+                "judge_model": JUDGE_MODEL,
             }
             if syn_ok is False:
                 row.update({"syntax_ok": "no", "judge_score": FAILED_LABEL,
@@ -609,10 +608,34 @@ def main():
     print(f"total cost:        ${gen_cost + judge_cost:.4f}")
     if scores:
         print(f"judge scores:      {[int(s) for s in scores]}  (sum {sum(scores):.0f} of {len(scores) * 2})")
+
     if excluded:
         print(f"NO_DOG (excluded): {excluded}")
+
     if broken:
         print(f"FAILED (excluded): {broken}")
+
+    positive = [
+        r for r in rows
+        if str(r.get("judge_score")) in ("1", "2")
+    ]
+
+    if positive:
+        print(f"\n--- POSITIVE SCORES ({len(positive)}) ---")
+        for r in sorted(
+            positive,
+            key=lambda x: (
+                -int(x["judge_score"]),
+                x["model"],
+                x["game_name"],
+            ),
+        ):
+            print(
+                f"  score={r['judge_score']}  "
+                f"{r['model']:40} {r['game_name']:16} "
+                f"{r['condition']:7} run{r['run']}"
+            )
+
     print(f"manifest:          {MANIFEST}")
 
 

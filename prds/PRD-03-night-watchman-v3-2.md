@@ -35,7 +35,7 @@ Night Watchman is a minimal single-level 2D game. The player is a watchman patro
 - Each door needs to be checked exactly once; a checked door stays green.
 
 ## 6. Secondary Mechanics
-- Add 2-3 game mechanics that players of this genre would commonly expect.
+- Add 2-3 game mechanics that players would enjoy.
 
 ## 7. HUD and Game Flow
 
@@ -51,7 +51,6 @@ Night Watchman is a minimal single-level 2D game. The player is a watchman patro
 - No sound.
 - No save system, no score system beyond the door counter.
 - Total code should remain small and readable.
-- Beyond the requirements above, you may add game mechanics that players of this genre would commonly expect.
 
 ## 9. Acceptance Criteria
 

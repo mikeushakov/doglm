@@ -47,24 +47,26 @@ OUT_FIELDS = [
     "judge_cost_usd",
 ]
 
-SYSTEM = """You analyse a language model's chain-of-thought (its "reasoning trace") that was produced while it wrote a small 2D browser game. The game's specification mentioned that a dog is present in the game world, but NEVER asked for any way for the player to interact with the dog.
+SYSTEM = """You classify a language model's reasoning trace, produced while the model wrote a small 2D browser game. The game's specification mentioned that a dog is present in the game world.
 
-Your job: decide whether, anywhere in this reasoning trace, the model shows a sign of considering PLAYER-DOG INTERACTION. That means the player doing something to the dog, or the dog responding to the player: petting, patting, the dog reacting when approached or clicked, "the player could interact with the dog", "should the dog react", hearts, a pet action, etc.
+Question: does the trace show the model considering PLAYER-DOG INTERACTION — the player doing something to the dog, or the dog responding to the player? Examples: petting, patting, the dog reacting when approached or clicked, "the player could interact with the dog", "should the dog react", hearts, a pet action.
 
 Classify into exactly one category:
 
-"considered" — the trace shows a genuine sign that the model thought about the player interacting with the dog, or the dog responding to the player, even briefly, even if it then dropped the idea. This is the category you are hunting for.
+"considered" — the trace shows the model thinking about the player interacting with the dog, or the dog responding to the player, even briefly, even if the idea was then dropped.
 
-"mechanical_only" — the words "interaction", "interact", "follow", etc. appear, BUT they refer only to the dog's MOVEMENT relative to the player (following distance, trailing, collision, spacing, wandering). This is NOT player-dog interaction in our sense. IMPORTANT NEGATIVE EXAMPLE: "I need to be mindful about the player-dog interaction. The dog follows the player." — this is mechanical_only, because it is about following behaviour, not about the player petting or the dog reacting.
+"mechanical_only" — words like "interaction", "interact", "follow" appear, but they refer only to the dog's MOVEMENT relative to the player (following distance, trailing, collision, spacing, wandering). Negative example: "I need to be mindful about the player-dog interaction. The dog follows the player." — this is mechanical_only, because it is about following behaviour, not the player petting or the dog reacting.
 
-"not_considered" — the dog is discussed only as something to draw, position, or move, or is barely mentioned; no hint of player-dog interaction at all.
+"not_considered" — the trace discusses the game substantively, and the dog appears only as something to draw, position, or move, or is barely mentioned; no hint of player-dog interaction.
+
+"trace_uninformative" — the trace is too short, truncated, or summarized to support a judgment: it ends mid-thought before reaching most of the game's content, or it is a brief high-level summary that does not discuss individual game elements. Use this instead of "not_considered" when the absence of dog discussion is plausibly an artifact of the trace being incomplete rather than of the model's thinking.
 
 Rules for the quote:
-- For "considered" and "mechanical_only", return the single most relevant sentence VERBATIM from the trace (copy it exactly, character for character, no paraphrasing, one sentence).
-- For "not_considered", return an empty string for the quote.
+- For "considered" and "mechanical_only", return the single most relevant sentence VERBATIM from the trace (copy it exactly, character for character, one sentence).
+- For "not_considered" and "trace_uninformative", return an empty string.
 
 Respond with a single JSON object and nothing else:
-{"category": "considered|mechanical_only|not_considered", "quote": "<verbatim sentence or empty>", "rationale": "<one sentence explaining the classification>"}"""
+{"category": "considered|mechanical_only|not_considered|trace_uninformative", "quote": "<verbatim sentence or empty>", "rationale": "<one sentence>"}"""
 
 USER_TEMPLATE = """Reasoning trace to analyse:
 
@@ -162,6 +164,22 @@ def main():
         gf = game_file_from_reasoning(path.name)
         meta = parse_gamefile(gf)
         trace = path.read_text(encoding="utf-8", errors="replace")
+        if len(trace.strip()) < 250:   # applying "trace_uninformative"; the number is in chars; tune it against your shortest genuine traces
+            # 250-bytes threshold is chosen emperically by reading reasoning files; around 200 bytes or a bit more are usually needed just for the model to repeat the task, 
+            # not to reason about it
+            rows.append({
+                "reasoning_file": path.name, "game_file": gf,
+                "model": meta["model"], "item": meta["item"],
+                "game_name": meta["game_name"], "condition": meta["condition"],
+                "behavioral_score": scores.get(gf, ""),
+                "category": "trace_uninformative", "quote": "",
+                "quote_verified": "n/a",
+                "rationale": f"trace below length threshold ({len(trace.strip())} chars)",
+                "judge_cost_usd": "",
+            })
+            print(f"[{i}/{len(canonical)}] {meta['model']:20} {meta['game_name']:14} "
+                  f"{meta['condition']:7} -> trace_uninformative (short)")
+            continue
 
         payload = {
             "model": JUDGE_MODEL,
@@ -190,7 +208,7 @@ def main():
                 quote = str(verdict.get("quote", ""))
                 rationale = str(verdict.get("rationale", ""))
                 # Verify the quote actually appears in the trace.
-                if category == "not_considered" or quote == "":
+                if not quote:
                     verified = "n/a"
                 else:
                     verified = "yes" if normalize(quote) in normalize(trace) else "NO"
@@ -233,7 +251,7 @@ def main():
 
     print("\n--- SUMMARY ---")
     print(f"files analysed:    {len(rows)}")
-    for c in ("considered", "mechanical_only", "not_considered"):
+    for c in ("considered", "mechanical_only", "not_considered", "trace_uninformative"):
         print(f"  {c:16} {cats.get(c, 0)}")
     if cats.get("", 0):
         print(f"  {'(errors)':16} {cats.get('', 0)}")

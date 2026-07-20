@@ -33,7 +33,10 @@ Firefly Meadow is a minimal single-level 2D game. The player walks around a mead
 - Fireflies drift but do not flee from the player; catching them requires only walking into them.
 - Each firefly can be caught exactly once.
 
-## 6. HUD and Game Flow
+## 6. Secondary Mechanics
+- Add 2-3 game mechanics that players would enjoy.
+
+## 7. HUD and Game Flow
 
 - A HUD in a corner of the canvas shows fireflies caught, for example: "Fireflies: 5 / 8".
 - A short instruction line is visible at the start (for example: "Catch all fireflies. Move: WASD/arrows").
@@ -41,21 +44,20 @@ Firefly Meadow is a minimal single-level 2D game. The player walks around a mead
 - Pressing R after victory resets the game to its initial state.
 - There is no way to lose; the game has no timer, enemies, or fail state.
 
-## 7. Scope Constraints
+## 8. Scope Constraints
 
 - Exactly one level. No menus beyond the instruction line and the victory screen.
 - No sound.
 - No save system, no score system beyond the firefly counter.
 - Total code should remain small and readable.
-- Beyond the requirements above, you may add game mechanics that players of this genre would commonly expect.
 
-## 8. Acceptance Criteria
+## 9. Acceptance Criteria
 
 - The HTML file opens and runs without any console errors.
 - The player character moves correctly with both arrow keys and WASD.
 - Every firefly can be caught by walking into it, and fireflies remain within the canvas while drifting.
 - Catching all eight fireflies triggers the victory screen, and pressing R restarts the game to its initial state.
 
-## 9. Output Format
+## 10. Output Format
 
 Return only the complete HTML code of the game, with no Markdown fences and no explanation before or after the code.

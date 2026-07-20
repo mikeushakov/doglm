@@ -24,7 +24,7 @@ There are five games:
 Games 1 and 2 have an interact key (E or Space); games 3 to 5 do not, so pet-the-dog mechanics must be invented by the model from scratch. 
 Each PRD exists in two versions / conditions: 
 - **Uncued**: contains no hint about additional game mechanics of any kind
-- **Cued**: contains one extra section requiring the model to add additional game mechanics, but is not mentioning the dog: "Add 2-3 game mechanics that players of this genre would commonly expect".
+- **Cued**: contains one extra section requiring the model to add additional game mechanics, but is not mentioning the dog: "Add 2-3 game mechanics that a player would enjoy".
 
 ## Scoring
 
