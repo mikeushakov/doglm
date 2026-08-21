@@ -25,8 +25,8 @@ Each PRD exists in two versions / conditions:
 - **Uncued**: contains no hint for a model to add any nice-to-have game mechanics
 - **Cued**: contains one extra sentence requiring the model to add additional game mechanics: "Add 2-3 game mechanics that a player would enjoy".
 
-The PRDs for Games 1 and 2 mention an interact key (E or Space) for a player to complete the in-game tasks (like harvesting a crop). The presence of the interact keys in the prompts for Games 1 and 2 may or may hint a model to create additional nice-to-have interactions.  
-The PRDs for Games 3, 4, and 5 do not mention any interaction keys, making it potentially harder for the models to spontaneously come up with additional mechanisms such as dog petting.
+The PRDs for Games 1 and 2 mention an interact key (E or Space) for a player to complete the in-game tasks (like harvesting a crop). The presence of the interact keys in the prompts for Games 1 and 2 may or may hint a model to create additional nice-to-have interactions such as dog petting.  
+The PRDs for Games 3, 4, and 5 do not mention any interaction keys, making it potentially harder for a model to spontaneously come up with additional mechanics.
 
 
 ## Scoring
