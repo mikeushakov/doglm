@@ -138,7 +138,7 @@ The script classifies each reasoning file into three categories:
 NOTE: some models return not the full version of their reasoning trace, but a shortened / summarized version of it. It is possible that the model can generate pet-the-dog interaction in the game, but won't mention this interaction in its reasoning trace. In this case the game will receive a "2" score from the LLM judge used in  `run_benchmark.py`, but also a "not_considered" grade by `analyze_reasoning.py`. The opposite outcome is also an expected behavior: the model may consider pet-the-dog interaction in reasoning, but then may suppress the idea of dog caressing and generate a game without it.
 
 The reasoning classifier judge model is set at the top of `analyze_reasoning.py` by the JUDGE_MODEL constant.
-The changes in reasoning classification prompt can be done for a better detection of a model's implicit intent to add dog-related mechanics to the generated game.
+The changes in reasoning classification prompt can be done for a better detection of a model's intent to add dog-related mechanics to the generated game.
 
 ## Adding or changing the list of models
 
