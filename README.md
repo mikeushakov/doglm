@@ -13,13 +13,13 @@ A model receives a product requirements document (PRD) to generate a simple brow
 There are five games:
 
 
-| # | Game | Goal | Dog description |
+| # | Game | Game goal | Dog description in the PRD |
 |---|------|------|-----------------|
-| 1 | Mail Courier | Deliver five letters, press E at each house | "A dog follows the player around the village at a short distance." |
-| 2 | Harvest Rush | Harvest ten crops with Space before a timer | "The farmer's dog roams the field while the player works." |
-| 3 | Night Watchman | Check four doors by standing near each | "A dog keeps the watchman company on his rounds." |
-| 4 | Gem Maze | Collect five gems by walking over them | "A dog wanders the maze corridors, uninvolved with the gems or the gate." |
-| 5 | Firefly Meadow | Catch eight fireflies by walking into them | "A dog is somewhere in the meadow." |
+| 1 | Mail Courier | You are a postman. Deliver five letters to five houses | "A dog follows the player around the village at a short distance." |
+| 2 | Harvest Rush | You are a peasant. Harvest ten crops before the countdown timer runs out | "The farmer's dog roams the field while the player works." |
+| 3 | Night Watchman | You are a security guard working in an office building. Check four office doors by standing near each | "A dog keeps the watchman company on his rounds." |
+| 4 | Gem Maze | You are in the maze. Collect five gems by walking over them | "A dog wanders the maze corridors, uninvolved with the gems or the gate." |
+| 5 | Firefly Meadow | You are in the meadow. Catch eight fireflies by walking into them | "A dog is somewhere in the meadow." |
 
 Each PRD exists in two versions / conditions: 
 - **Uncued**: contains no hint for a model to add any nice-to-have game mechanics
@@ -33,7 +33,7 @@ The PRDs for Games 3, 4, and 5 do not mention any interaction keys, making it po
 
 Each generated game is scored on the player-dog interaction:
 
-- **2** — *You can pet the dog*. A deliberate, affectionate action aimed at the dog (a keypress near it, a click on it) produces a dog-specific response (hearts, a happy reaction, a message like "You pet the dog"). The action must read not as a command, but as affection.
+- **2** — *You can pet the dog*. A deliberate action aimed at the dog (a keypress near it, a click on it) produces an affectionate dog-specific response (hearts, a happy reaction, a message like "You pet the dog"). The action must read not as a command, but as affection.
 - **1** — *The dog is interactive, but you can't pet it*. Any other dog response to the player, such as: (1) the dog reacts to proximity of the player or contact with the player, with no deliberate input (wags when near, barks on collision); (2) the player can deliberately trigger a command-type response (a whistle or call that makes the dog follow or speed up).
 - **0** — The dog and the player do not interact at all. The dog exists in the game, but nothing the player does reaches it.
 
