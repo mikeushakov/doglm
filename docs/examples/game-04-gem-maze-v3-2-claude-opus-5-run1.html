@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Gem Maze</title>
+<style>
+  html,body{margin:0;height:100%;background:#0b0d14;color:#cfd6e6;
+    font-family:system-ui,"Segoe UI",Arial,sans-serif;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;}
+  h1{font-size:16px;font-weight:600;letter-spacing:4px;margin:10px 0 8px;color:#8ea3c8}
+  canvas{background:#0f1220;border:2px solid #2b3245;border-radius:8px;
+    box-shadow:0 10px 40px rgba(0,0,0,.6);display:block}
+  .hint{font-size:12px;color:#5d6a86;margin:10px}
+</style>
+</head>
+<body>
+<h1>GEM MAZE</h1>
+<canvas id="c" width="800" height="600"></canvas>
+<div class="hint">WASD / Arrows to move &middot; Shift to sprint &middot; Pet the dog &middot; R to restart</div>
+<script>
+(function(){
+"use strict";
+
+var canvas = document.getElementById("c");
+var ctx = canvas.getContext("2d");
+
+var TILE = 40, COLS = 20, ROWS = 15;
+
+// Fixed, hand-made maze. '#' = wall, '.' = corridor
+var MAP = [
+  "####################",
+  "#........#.........#",
+  "#.######.#.#######.#",
+  "#.#....#.#.#.....#.#",
+  "#.#.##.#.#.#.###.#.#",
+  "#...#..#...#...#...#",
+  "#####.####.###.#####",
+  "#.....#......#.....#",
+  "#.###.#.####.#.###.#",
+  "#.#...#....#...#...#",
+  "#.#.#######.#####.##",
+  "#.#.......#.......##",
+  "#.#######.#######..#",
+  "#..................#",
+  "####################"
+];
+
+var GATE = {c:18, r:0};                 // exit gate on the maze border
+var GEM_POS = [[3,3],[16,5],[9,9],[1,7],[17,12]];
+var PORTALS = [[1,5],[18,13]];          // linked warp pair
+var START = {c:1, r:13};
+var DOG_START = {c:9, r:7};
+
+var PR = 12;   // player radius
+var DR = 11;   // dog radius
+var BASE_SPEED = 145;   // px / second
+var SPRINT_MUL = 1.75;
+
+var DIRS = [[1,0],[-1,0],[0,1],[0,-1]];
+
+var player, dog, gems, particles, popups, gateOpen, state, elapsed, portalCd, msg, msgT;
+var keys = {};
+
+function cx(c){ return c*TILE + TILE/2; }
+function cy(r){ return r*TILE + TILE/2; }
+
+function isWall(c, r){
+  if (c < 0 || r < 0 || c >= COLS || r >= ROWS) return true;
+  if (c === GATE.c && r === GATE.r) return !gateOpen;
+  return MAP[r].charAt(c) === "#";
+}
+function freePoint(x, y){
+  return !isWall(Math.floor(x/TILE), Math.floor(y/TILE));
+}
+function canMove(x, y, rad){
+  return freePoint(x-rad, y-rad) && freePoint(x+rad, y-rad) &&
+         freePoint(x-rad, y+rad) && freePoint(x+rad, y+rad);
+}
+
+function init(){
+  player = { x:cx(START.c), y:cy(START.r), fx:0, fy:1, stamina:100, tired:false, sprinting:false };
+  dog = { x:cx(DOG_START.c), y:cy(DOG_START.r), d:DIRS[0], t:1, follow:false, wag:0 };
+  gems = GEM_POS.map(function(p){ return {x:cx(p[0]), y:cy(p[1]), got:false}; });
+  particles = [];
+  popups = [];
+  gateOpen = false;
+  state = "play";
+  elapsed = 0;
+  portalCd = 0;
+  msg = "";
+  msgT = 0;
+}
+
+function spark(x, y, n, color){
+  for (var i=0;i<n;i++){
+    var a = Math.random()*Math.PI*2, s = 40 + Math.random()*130;
+    particles.push({x:x, y:y, vx:Math.cos(a)*s, vy:Math.sin(a)*s,
+      life:0.5+Math.random()*0.5, max:1, size:1.5+Math.random()*2.5, color:color});
+  }
+}
+function popup(x, y, text, color){
+  popups.push({x:x, y:y, text:text, life:1.1, color:color||"#ffe27a"});
+}
+function say(text){ msg = text; msgT = 2.6; }
+
+/* ---------------- update ---------------- */
+
+function update(dt){
+  if (state !== "play") return;
+  elapsed += dt;
+  if (msgT > 0) msgT -= dt;
+  if (portalCd > 0) portalCd -= dt;
+
+  // ---- input / movement (4 & 8 directions, constant speed) ----
+  var ax = 0, ay = 0;
+  if (keys["arrowleft"] || keys["a"]) ax -= 1;
+  if (keys["arrowright"] || keys["d"]) ax += 1;
+  if (keys["arrowup"] || keys["w"]) ay -= 1;
+  if (keys["arrowdown"] || keys["s"]) ay += 1;
+
+  var moving = (ax !== 0 || ay !== 0);
+  if (moving){
+    var L = Math.hypot(ax, ay); ax /= L; ay /= L;
+    player.fx = ax; player.fy = ay;
+  }
+
+  // ---- secondary mechanic 1: sprint with stamina ----
+  var wantSprint = !!(keys["shift"]) && moving;
+  if (wantSprint && !player.tired && player.stamina > 0){
+    player.sprinting = true;
+    player.stamina -= 42*dt;
+    if (player.stamina <= 0){ player.stamina = 0; player.tired = true; }
+  } else {
+    player.sprinting = false;
+    player.stamina = Math.min(100, player.stamina + 26*dt);
+    if (player.tired && player.stamina > 35) player.tired = false;
+  }
+
+  var sp = BASE_SPEED * (player.sprinting ? SPRINT_MUL : 1) * dt;
+  var nx = player.x + ax*sp, ny = player.y + ay*sp;
+  if (canMove(nx, player.y, PR)) player.x = nx;
+  if (canMove(player.x, ny, PR)) player.y = ny;
+
+  if (player.sprinting && Math.random() < 0.5)
+    particles.push({x:player.x, y:player.y, vx:0, vy:0, life:0.3, max:0.3, size:5, color:"#6fd3ff"});
+
+  // ---- gem pickup (touch based) ----
+  for (var i=0;i<gems.length;i++){
+    var g = gems[i];
+    if (!g.got && Math.hypot(g.x-player.x, g.y-player.y) < PR + 13){
+      g.got = true;
+      spark(g.x, g.y, 18, "#7ef0ff");
+      popup(g.x, g.y, "+1", "#9cf6ff");
+      if (collected() === gems.length){
+        gateOpen = true;
+        spark(cx(GATE.c), cy(GATE.r)+6, 30, "#8dff9c");
+        popup(cx(GATE.c), cy(GATE.r)+34, "EXIT OPEN!", "#8dff9c");
+        say("All gems collected - the exit gate is open!");
+      } else {
+        say("Gem collected!  " + collected() + " / " + gems.length);
+      }
+    }
+  }
+
+  // ---- secondary mechanic 2: warp portals ----
+  for (var p=0;p<2;p++){
+    var px = cx(PORTALS[p][0]), py = cy(PORTALS[p][1]);
+    if (portalCd <= 0 && Math.hypot(px-player.x, py-player.y) < 16){
+      var o = PORTALS[1-p];
+      spark(px, py, 16, "#c58bff");
+      player.x = cx(o[0]); player.y = cy(o[1]);
+      spark(player.x, player.y, 16, "#c58bff");
+      portalCd = 1.0;
+      say("Whoosh! Warped across the maze.");
+    }
+  }
+
+  // ---- secondary mechanic 3: pet the dog -> gem-sniffing companion ----
+  if (!dog.follow && Math.hypot(dog.x-player.x, dog.y-player.y) < PR + DR + 4){
+    dog.follow = true;
+    spark(dog.x, dog.y, 14, "#ffd27a");
+    popup(dog.x, dog.y - 10, "\uD83D\uDC3E", "#ffd27a");
+    say("Good dog! It will sniff out the nearest gem.");
+  }
+  updateDog(dt);
+
+  // ---- win check ----
+  if (gateOpen && Math.floor(player.x/TILE) === GATE.c && Math.floor(player.y/TILE) === GATE.r){
+    state = "win";
+    spark(player.x, player.y, 40, "#ffe27a");
+  }
+
+  // ---- effects ----
+  for (var k=particles.length-1;k>=0;k--){
+    var q = particles[k];
+    q.x += q.vx*dt; q.y += q.vy*dt; q.vx *= 0.94; q.vy *= 0.94;
+    q.life -= dt;
+    if (q.life <= 0) particles.splice(k,1);
+  }
+  for (var j=popups.length-1;j>=0;j--){
+    popups[j].y -= 26*dt; popups[j].life -= dt;
+    if (popups[j].life <= 0) popups.splice(j,1);
+  }
+}
+
+function updateDog(dt){
+  dog.wag += dt;
+  if (dog.follow){
+    var dx = player.x - dog.x, dy = player.y - dog.y, d = Math.hypot(dx, dy);
+    if (d > 44){
+      var sp = 120*dt;
+      var mx = dx/d*sp, my = dy/d*sp;
+      if (canMove(dog.x+mx, dog.y, DR)) dog.x += mx;
+      if (canMove(dog.x, dog.y+my, DR)) dog.y += my;
+    }
+    return;
+  }
+  dog.t -= dt;
+  var s = 58*dt;
+  var nx = dog.x + dog.d[0]*s, ny = dog.y + dog.d[1]*s;
+  if (dog.t <= 0 || !canMove(nx, ny, DR)){
+    dog.d = DIRS[Math.floor(Math.random()*4)];
+    dog.t = 0.7 + Math.random()*1.8;
+  } else {
+    dog.x = nx; dog.y = ny;
+  }
+}
+
+function collected(){
+  var n = 0;
+  for (var i=0;i<gems.length;i++) if (gems[i].got) n++;
+  return n;
+}
+function nearestGem(){
+  var best = null, bd = 1e9;
+  for (var i=0;i<gems.length;i++){
+    var g = gems[i];
+    if (g.got) continue;
+    var d = Math.hypot(g.x-dog.x, g.y-dog.y);
+    if (d < bd){ bd = d; best = g; }
+  }
+  return best;
+}
+
+/* ---------------- drawing ---------------- */
+
+function roundRect(x,y,w,h,r){
+  ctx.beginPath();
+  ctx.moveTo(x+r,y); ctx.lineTo(x+w-r,y); ctx.quadraticCurveTo(x+w,y,x+w,y+r);
+  ctx.lineTo(x+w,y+h-r); ctx.quadraticCurveTo(x+w,y+h,x+w-r,y+h);
+  ctx.lineTo(x+r,y+h); ctx.quadraticCurveTo(x,y+h,x,y+h-r);
+  ctx.lineTo(x,y+r); ctx.quadraticCurveTo(x,y,x+r,y);
+  ctx.closePath();
+}
+
+function drawMaze(){
+  for (var r=0;r<ROWS;r++){
+    for (var c=0;c<COLS;c++){
+      var x = c*TILE, y = r*TILE;
+      var gate = (c === GATE.c && r === GATE.r);
+      if (gate) continue;
+      if (MAP[r].charAt(c) === "#"){
+        ctx.fillStyle = "#2b3450";
+        ctx.fillRect(x, y, TILE, TILE);
+        ctx.fillStyle = "#3a4674";
+        ctx.fillRect(x, y, TILE, 4);
+        ctx.fillStyle = "rgba(0,0,0,.18)";
+        ctx.fillRect(x, y+TILE-4, TILE, 4);
+      } else {
+        ctx.fillStyle = "#161c2c";
+        ctx.fillRect(x, y, TILE, TILE);
+        ctx.fillStyle = "rgba(255,255,255,.022)";
+        ctx.fillRect(x+18, y+18, 4, 4);
+      }
+    }
+  }
+}
+
+function drawGate(){
+  var x = GATE.c*TILE, y = GATE.r*TILE, t = elapsed;
+  if (gateOpen){
+    var glow = 0.55 + 0.45*Math.sin(t*4);
+    ctx.fillStyle = "#123322";
+    ctx.fillRect(x, y, TILE, TILE);
+    ctx.strokeStyle = "rgba(120,255,150," + (0.5+0.5*glow) + ")";
+    ctx.lineWidth = 3;
+    ctx.strokeRect(x+2.5, y+2.5, TILE-5, TILE-5);
+    ctx.fillStyle = "rgba(140,255,170," + (0.25*glow+0.2) + ")";
+    ctx.fillRect(x+5, y+5, TILE-10, TILE-10);
+    ctx.fillStyle = "#b9ffcd";
+    ctx.font = "bold 11px system-ui, Arial";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText("EXIT", x+TILE/2, y+TILE/2+2);
+    ctx.beginPath();
+    ctx.moveTo(x+TILE/2, y+7); ctx.lineTo(x+TILE/2-6, y+16); ctx.lineTo(x+TILE/2+6, y+16);
+    ctx.closePath(); ctx.fill();
+  } else {
+    ctx.fillStyle = "#4a3524";
+    ctx.fillRect(x, y, TILE, TILE);
+    ctx.fillStyle = "#8a6a44";
+    for (var i=0;i<4;i++) ctx.fillRect(x+5+i*9, y+4, 4, TILE-8);
+    ctx.fillStyle = "#6b5133";
+    ctx.fillRect(x+2, y+TILE-9, TILE-4, 5);
+    ctx.font = "13px serif";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText("\uD83D\uDD12", x+TILE/2, y+TILE/2);
+  }
+}
+
+function drawPortals(){
+  for (var p=0;p<2;p++){
+    var x = cx(PORTALS[p][0]), y = cy(PORTALS[p][1]);
+    var s = 10 + Math.sin(elapsed*3 + p)*2;
+    for (var i=3;i>=1;i--){
+      ctx.beginPath();
+      ctx.arc(x, y, s*i/3 + 2, 0, Math.PI*2);
+      ctx.strokeStyle = "rgba(197,139,255," + (0.25*i) + ")";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+    ctx.beginPath();
+    ctx.arc(x, y, 4, 0, Math.PI*2);
+    ctx.fillStyle = "#e6ccff";
+    ctx.fill();
+  }
+}
+
+function drawGems(){
+  ctx.font = "24px serif";
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  for (var i=0;i<gems.length;i++){
+    var g = gems[i];
+    if (g.got) continue;
+    var bob = Math.sin(elapsed*3 + i)*3;
+    ctx.beginPath();
+    ctx.arc(g.x, g.y+bob, 13, 0, Math.PI*2);
+    ctx.fillStyle = "rgba(120,230,255,.16)";
+    ctx.fill();
+    ctx.fillText("\uD83D\uDC8E", g.x, g.y+bob);
+  }
+}
+
+function drawDog(){
+  ctx.font = "22px serif";
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  var bob = Math.sin(dog.wag*8)*1.5;
+  ctx.fillText("\uD83D\uDC15", dog.x, dog.y + bob);
+  if (dog.follow){
+    var g = nearestGem();
+    if (g){
+      var a = Math.atan2(g.y-dog.y, g.x-dog.x);
+      ctx.save();
+      ctx.translate(dog.x + Math.cos(a)*20, dog.y + Math.sin(a)*20 - 4);
+      ctx.rotate(a);
+      ctx.fillStyle = "rgba(255,220,120,.9)";
+      ctx.beginPath();
+      ctx.moveTo(8,0); ctx.lineTo(-4,-5); ctx.lineTo(-4,5);
+      ctx.closePath(); ctx.fill();
+      ctx.restore();
+    }
+  }
+}
+
+function drawPlayer(){
+  var x = player.x, y = player.y;
+  var g = ctx.createRadialGradient(x-4, y-5, 2, x, y, PR+2);
+  g.addColorStop(0, "#ffe9a8");
+  g.addColorStop(1, player.sprinting ? "#ff9f4a" : "#f2a83c");
+  ctx.beginPath();
+  ctx.arc(x, y, PR, 0, Math.PI*2);
+  ctx.fillStyle = g; ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = "#6b4715"; ctx.stroke();
+  // eyes look toward facing direction
+  var ex = player.fx*3.5, ey = player.fy*3.5;
+  ctx.fillStyle = "#2a1c05";
+  ctx.beginPath(); ctx.arc(x-4+ex, y-2+ey, 2, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(x+4+ex, y-2+ey, 2, 0, Math.PI*2); ctx.fill();
+}
+
+function drawEffects(){
+  for (var i=0;i<particles.length;i++){
+    var q = particles[i];
+    ctx.globalAlpha = Math.max(0, q.life / q.max);
+    ctx.fillStyle = q.color;
+    ctx.beginPath(); ctx.arc(q.x, q.y, q.size, 0, Math.PI*2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  for (var j=0;j<popups.length;j++){
+    var p = popups[j];
+    ctx.globalAlpha = Math.max(0, Math.min(1, p.life));
+    ctx.font = "bold 16px system-ui, Arial";
+    ctx.fillStyle = p.color;
+    ctx.fillText(p.text, p.x, p.y);
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawHUD(){
+  // panel
+  ctx.fillStyle = "rgba(8,10,18,.62)";
+  roundRect(10, 8, 196, 50, 8); ctx.fill();
+  ctx.strokeStyle = "rgba(140,170,220,.25)"; ctx.lineWidth = 1;
+  roundRect(10, 8, 196, 50, 8); ctx.stroke();
+
+  ctx.textAlign = "left"; ctx.textBaseline = "middle";
+  ctx.font = "bold 15px system-ui, Arial";
+  ctx.fillStyle = "#e6f0ff";
+  ctx.fillText("\uD83D\uDC8E Gems: " + collected() + " / " + gems.length, 22, 24);
+
+  // stamina bar
+  ctx.fillStyle = "#7d8aa6";
+  ctx.font = "10px system-ui, Arial";
+  ctx.fillText("STAMINA", 22, 44);
+  var bx = 78, bw = 116;
+  ctx.fillStyle = "rgba(255,255,255,.12)";
+  roundRect(bx, 39, bw, 9, 4); ctx.fill();
+  ctx.fillStyle = player.tired ? "#e06a6a" : "#6fd3ff";
+  roundRect(bx, 39, Math.max(2, bw*player.stamina/100), 9, 4); ctx.fill();
+
+  // gate status
+  ctx.textAlign = "right";
+  ctx.font = "bold 13px system-ui, Arial";
+  ctx.fillStyle = gateOpen ? "#8dff9c" : "#e0a878";
+  ctx.fillText(gateOpen ? "GATE OPEN" : "GATE LOCKED", 790, 24);
+  if (dog.follow){
+    ctx.font = "11px system-ui, Arial";
+    ctx.fillStyle = "#ffd27a";
+    ctx.fillText("\uD83D\uDC3E dog is sniffing out gems", 790, 44);
+  }
+
+  // toast message
+  if (msgT > 0){
+    ctx.globalAlpha = Math.min(1, msgT/0.6);
+    ctx.textAlign = "center";
+    ctx.font = "bold 14px system-ui, Arial";
+    ctx.fillStyle = "rgba(8,10,18,.7)";
+    var w = ctx.measureText(msg).width + 26;
+    roundRect(400-w/2, 552, w, 26, 8); ctx.fill();
+    ctx.fillStyle = "#dbe7ff";
+    ctx.fillText(msg, 400, 566);
+    ctx.globalAlpha = 1;
+  }
+
+  // starting instructions (fade out)
+  if (elapsed < 13 && state === "play"){
+    var a = elapsed < 9 ? 1 : (13 - elapsed)/4;
+    ctx.globalAlpha = a;
+    ctx.textAlign = "center";
+    ctx.font = "13px system-ui, Arial";
+    var line = "Collect all gems to open the exit.  Move: WASD/Arrows  \u00B7  Shift: sprint  \u00B7  Pet the dog for a gem hint  \u00B7  Purple rings warp you";
+    ctx.fillStyle = "rgba(8,10,18,.72)";
+    var w2 = ctx.measureText(line).width + 28;
+    roundRect(400-w2/2, 512, w2, 28, 9); ctx.fill();
+    ctx.fillStyle = "#cfe0ff";
+    ctx.fillText(line, 400, 526);
+    ctx.globalAlpha = 1;
+  }
+}
+
+function drawWin(){
+  ctx.fillStyle = "rgba(6,8,14,.82)";
+  ctx.fillRect(0, 0, 800, 600);
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillStyle = "#ffe27a";
+  ctx.font = "bold 40px system-ui, Arial";
+  ctx.fillText("You escaped the maze!", 400, 250);
+  ctx.fillStyle = "#8dff9c";
+  ctx.font = "bold 28px system-ui, Arial";
+  ctx.fillText("You win! \uD83D\uDC8E\uD83D\uDC8E\uD83D\uDC8E\uD83D\uDC8E\uD83D\uDC8E", 400, 305);
+  ctx.fillStyle = "#cfd6e6";
+  ctx.font = "17px system-ui, Arial";
+  ctx.fillText("Press R to restart", 400, 365);
+}
+
+function render(){
+  ctx.clearRect(0, 0, 800, 600);
+  drawMaze();
+  drawPortals();
+  drawGate();
+  drawGems();
+  drawEffects();
+  drawDog();
+  drawPlayer();
+  drawHUD();
+  if (state === "win") drawWin();
+}
+
+/* ---------------- loop & input ---------------- */
+
+var last = 0;
+function frame(ts){
+  if (!last) last = ts;
+  var dt = Math.min(0.05, (ts - last)/1000);
+  last = ts;
+  update(dt);
+  render();
+  requestAnimationFrame(frame);
+}
+
+window.addEventListener("keydown", function(e){
+  var k = e.key.toLowerCase();
+  if (k === "shift") keys["shift"] = true; else keys[k] = true;
+  if (k === "r"){ init(); }
+  if (["arrowup","arrowdown","arrowleft","arrowright"," "].indexOf(k) >= 0) e.preventDefault();
+});
+window.addEventListener("keyup", function(e){
+  var k = e.key.toLowerCase();
+  if (k === "shift") keys["shift"] = false; else keys[k] = false;
+});
+window.addEventListener("blur", function(){ keys = {}; });
+
+init();
+requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
