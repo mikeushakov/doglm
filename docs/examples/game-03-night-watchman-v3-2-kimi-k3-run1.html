@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Night Watchman</title>
+<style>
+  html,body{margin:0;height:100%;background:#0b0e17;display:flex;align-items:center;justify-content:center;font-family:monospace;}
+  canvas{background:#141a26;border:2px solid #2a3446;box-shadow:0 0 40px #000;}
+</style>
+</head>
+<body>
+<canvas id="game" width="800" height="600"></canvas>
+<script>
+"use strict";
+
+// ---------- Setup ----------
+const cvs = document.getElementById("game"), ctx = cvs.getContext("2d");
+const W = 800, H = 600;
+const CHECK_R = 58, SPEED = 185, SPRINT = 295;
+
+// Offscreen canvas used for the darkness / flashlight effect
+const dark = document.createElement("canvas"); dark.width = W; dark.height = H;
+const dctx = dark.getContext("2d");
+
+// ---------- World geometry ----------
+const walls = [
+  {x:0,   y:0,   w:800, h:20 },   // top
+  {x:0,   y:580, w:360, h:20 },   // bottom (left of entrance)
+  {x:440, y:580, w:360, h:20 },   // bottom (right of entrance)
+  {x:0,   y:0,   w:20,  h:600},   // left
+  {x:780, y:0,   w:20,  h:600},   // right
+  {x:280, y:20,  w:16,  h:160},   // left room divider (top)
+  {x:280, y:240, w:16,  h:96 },   // left room divider (bottom)
+  {x:20,  y:320, w:276, h:16 },   // left room floor wall
+  {x:504, y:20,  w:16,  h:160},   // right room divider (top)
+  {x:504, y:240, w:16,  h:96 },   // right room divider (bottom)
+  {x:504, y:320, w:276, h:16 }    // right room floor wall
+];
+
+const decor = [
+  {x:56,  y:56,  w:88, h:40, c:"#5a4632", t:"desk"},
+  {x:40,  y:250, w:36, h:36, c:"#6b5335", t:"crate"},
+  {x:82,  y:250, w:36, h:36, c:"#75603f", t:"crate"},
+  {x:620, y:56,  w:40, h:40, c:"#6b5335", t:"crate"},
+  {x:668, y:56,  w:40, h:40, c:"#75603f", t:"crate"},
+  {x:644, y:104, w:40, h:40, c:"#6b5335", t:"crate"},
+  {x:720, y:248, w:34, h:34, c:"#2f6b3a", t:"plant"},
+  {x:360, y:424, w:110,h:42, c:"#4a3b5a", t:"table"},
+  {x:70,  y:430, w:36, h:36, c:"#6b5335", t:"crate"},
+  {x:716, y:520, w:34, h:34, c:"#2f6b3a", t:"plant"}
+];
+
+const solids = walls.concat(decor);
+
+// Doors: slab (sx,sy,w,h) drawn on wall, lamp (lx,ly), check point (cx,cy)
+function makeDoors(){ return [
+  {sx:2,   sy:117, w:16, h:56, lx:34,  ly:104, cx:64,  cy:145, checked:false, prog:0},
+  {sx:782, sy:117, w:16, h:56, lx:766, ly:104, cx:736, cy:145, checked:false, prog:0},
+  {sx:372, sy:2,   w:56, h:16, lx:448, ly:34,  cx:400, cy:66,  checked:false, prog:0},
+  {sx:122, sy:582, w:56, h:16, lx:196, ly:566, cx:150, cy:536, checked:false, prog:0}
+];}
+
+// ---------- State ----------
+let doors, player, dog, popups, checkedCount, won, stamina, flashlight, coneLen, helpFade, petCD;
+let time = 0;
+const keys = {};
+
+function reset(){
+  doors = makeDoors();
+  player = {x:400, y:522, fx:0, fy:-1, moving:false};
+  dog = {x:448, y:548, wag:0, happy:0, moving:false};
+  popups = [];
+  checkedCount = 0;
+  won = false;
+  stamina = 100;
+  flashlight = true;
+  coneLen = 235;
+  helpFade = 1;
+  petCD = 0;
+}
+
+// ---------- Helpers ----------
+function hit(x, y, r){
+  if (x < r || y < r || x > W - r || y > H - r) return true;
+  for (const s of solids)
+    if (x + r > s.x && x - r < s.x + s.w && y + r > s.y && y - r < s.y + s.h) return true;
+  return false;
+}
+
+function tryPet(){
+  if (won || petCD > 0) return;
+  if (Math.hypot(player.x - dog.x, player.y - dog.y) < 52){
+    petCD = 0.9;
+    dog.happy = 1.8;
+    popups.push({x:dog.x, y:dog.y - 16, t:"❤", life:1.1, c:"#ff7eb0"});
+  }
+}
+
+addEventListener("keydown", e => {
+  keys[e.code] = true;
+  if (["ArrowUp","ArrowDown","ArrowLeft","ArrowRight"].includes(e.code)) e.preventDefault();
+  if (e.repeat) return;
+  if (e.code === "KeyF") flashlight = !flashlight;
+  if (e.code === "KeyE") tryPet();
+  if (e.code === "KeyR" && won) reset();
+});
+addEventListener("keyup", e => keys[e.code] = false);
+
+// ---------- Update ----------
+function update(dt){
+  time += dt;
+  for (const p of popups){ p.life -= dt; p.y -= 22 * dt; }
+  popups = popups.filter(p => p.life > 0);
+  if (petCD > 0) petCD -= dt;
+  coneLen += ((flashlight ? 235 : 0) - coneLen) * Math.min(1, dt * 8);
+  if (won) return;
+
+  // Player movement (WASD + arrows, 8 directions, sprint on Shift)
+  let dx = 0, dy = 0;
+  if (keys.KeyW || keys.ArrowUp)    dy--;
+  if (keys.KeyS || keys.ArrowDown)  dy++;
+  if (keys.KeyA || keys.ArrowLeft)  dx--;
+  if (keys.KeyD || keys.ArrowRight) dx++;
+  const moving = dx !== 0 || dy !== 0;
+  const sprint = (keys.ShiftLeft || keys.ShiftRight) && stamina > 0 && moving;
+  stamina = Math.max(0, Math.min(100, stamina + (sprint ? -32 : 16) * dt));
+  player.moving = false;
+  if (moving){
+    const l = Math.hypot(dx, dy), s = (sprint ? SPRINT : SPEED) * dt / l;
+    if (!hit(player.x + dx * s, player.y, 13)) player.x += dx * s;
+    if (!hit(player.x, player.y + dy * s, 13)) player.y += dy * s;
+    player.fx = dx / l; player.fy = dy / l; player.moving = true;
+  }
+
+  // Dog: trails the player, slides along walls, waits if stuck
+  const ddx = player.x - dog.x, ddy = player.y - dog.y, dist = Math.hypot(ddx, ddy);
+  dog.moving = false;
+  if (dist > 640){ // fell too far behind: quietly rejoin
+    dog.x = player.x - player.fx * 34;
+    dog.y = player.y - player.fy * 34;
+  } else if (dist > 46){
+    const step = Math.min((dist > 150 ? 275 : 170) * dt, dist - 42) / dist;
+    if (!hit(dog.x + ddx * step, dog.y, 9)) dog.x += ddx * step;
+    if (!hit(dog.x, dog.y + ddy * step, 9)) dog.y += ddy * step;
+    dog.moving = true;
+  }
+  dog.wag += dt * (dog.happy > 0 ? 18 : (dog.moving ? 10 : 3));
+  if (dog.happy > 0) dog.happy -= dt;
+
+  // Door checking: stand within radius for 2 continuous seconds
+  let active = null;
+  for (const d of doors)
+    if (!d.checked && Math.hypot(player.x - d.cx, player.y - d.cy) < CHECK_R){ active = d; break; }
+  for (const d of doors){
+    if (d === active){
+      d.prog += dt / 2;
+      if (d.prog >= 1){
+        d.checked = true;
+        checkedCount++;
+        popups.push({x:d.cx, y:d.cy - 16, t:"Checked!", life:1.4, c:"#7CFC9A"});
+        if (checkedCount === 4) won = true;
+      }
+    } else d.prog = 0;
+  }
+  if (checkedCount > 0) helpFade = Math.max(0, helpFade - dt);
+}
+
+// ---------- Drawing ----------
+function hole(x, y, r, a){
+  const g = dctx.createRadialGradient(x, y, 2, x, y, r);
+  g.addColorStop(0, "rgba(0,0,0," + a + ")");
+  g.addColorStop(1, "rgba(0,0,0,0)");
+  dctx.fillStyle = g;
+  dctx.beginPath(); dctx.arc(x, y, r, 0, 7); dctx.fill();
+}
+
+function drawDarkness(){
+  dctx.globalCompositeOperation = "source-over";
+  dctx.clearRect(0, 0, W, H);
+  dctx.fillStyle = "rgba(5,8,20,0.93)";
+  dctx.fillRect(0, 0, W, H);
+  dctx.globalCompositeOperation = "destination-out";
+  hole(player.x, player.y, flashlight ? 62 : 42, 0.55); // small ambient light
+  if (coneLen > 4){ // flashlight cone in facing direction
+    const a = Math.atan2(player.fy, player.fx);
+    const g = dctx.createRadialGradient(player.x, player.y, 10, player.x, player.y, coneLen);
+    g.addColorStop(0, "rgba(0,0,0,0.95)");
+    g.addColorStop(1, "rgba(0,0,0,0)");
+    dctx.fillStyle = g;
+    dctx.beginPath();
+    dctx.moveTo(player.x, player.y);
+    dctx.arc(player.x, player.y, coneLen, a - 0.48, a + 0.48);
+    dctx.closePath(); dctx.fill();
+  }
+  hole(dog.x, dog.y, 26, 0.5); // faint glow around the dog
+  ctx.drawImage(dark, 0, 0);
+}
+
+function drawDecor(d){
+  ctx.fillStyle = d.c; ctx.fillRect(d.x, d.y, d.w, d.h);
+  if (d.t === "crate"){
+    ctx.strokeStyle = "rgba(0,0,0,0.35)";
+    ctx.strokeRect(d.x + 3.5, d.y + 3.5, d.w - 7, d.h - 7);
+    ctx.beginPath();
+    ctx.moveTo(d.x + 4, d.y + 4); ctx.lineTo(d.x + d.w - 4, d.y + d.h - 4);
+    ctx.moveTo(d.x + d.w - 4, d.y + 4); ctx.lineTo(d.x + 4, d.y + d.h - 4);
+    ctx.stroke();
+  } else if (d.t === "plant"){
+    ctx.fillStyle = "#8a5a34"; ctx.fillRect(d.x + 6, d.y + d.h - 12, d.w - 12, 12);
+    ctx.fillStyle = "#3f8f4f"; ctx.beginPath(); ctx.arc(d.x + d.w/2, d.y + d.h/2 - 4, 11, 0, 7); ctx.fill();
+    ctx.fillStyle = "#55a866"; ctx.beginPath(); ctx.arc(d.x + d.w/2 - 4, d.y + d.h/2 - 7, 5, 0, 7); ctx.fill();
+  } else { // desk / table
+    ctx.strokeStyle = "rgba(0,0,0,0.3)";
+    ctx.strokeRect(d.x + 3.5, d.y + 3.5, d.w - 7, d.h - 7);
+    if (d.t === "desk"){
+      ctx.fillStyle = "#cfd6e4"; ctx.fillRect(d.x + 8, d.y + 8, 16, 12);
+      ctx.fillStyle = "#20242e"; ctx.fillRect(d.x + d.w - 26, d.y + 8, 18, 14);
+    }
+  }
+}
+
+function drawLamp(d){
+  const pulse = d.checked ? 1 : 0.55 + 0.45 * Math.sin(time * 5);
+  const g = ctx.createRadialGradient(d.lx, d.ly, 2, d.lx, d.ly, 26);
+  g.addColorStop(0, d.checked ? "rgba(60,255,120,0.5)" : "rgba(255,70,70," + (0.45 * pulse) + ")");
+  g.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = g; ctx.beginPath(); ctx.arc(d.lx, d.ly, 26, 0, 7); ctx.fill();
+  ctx.fillStyle = d.checked ? "#39d353" : "#ff4444";
+  ctx.beginPath(); ctx.arc(d.lx, d.ly, 5, 0, 7); ctx.fill();
+  ctx.strokeStyle = "#111"; ctx.stroke();
+  if (!d.checked && d.prog > 0){
+    // show the check zone while filling
+    ctx.strokeStyle = "rgba(255,215,94,0.22)";
+    ctx.setLineDash([6, 6]);
+    ctx.beginPath(); ctx.arc(d.cx, d.cy, CHECK_R, 0, 7); ctx.stroke();
+    ctx.setLineDash([]);
+    // progress ring around the lamp
+    ctx.strokeStyle = "rgba(255,255,255,0.25)"; ctx.lineWidth = 4;
+    ctx.beginPath(); ctx.arc(d.lx, d.ly, 12, 0, 7); ctx.stroke();
+    ctx.strokeStyle = "#ffd75e";
+    ctx.beginPath(); ctx.arc(d.lx, d.ly, 12, -Math.PI/2, -Math.PI/2 + d.prog * Math.PI * 2); ctx.stroke();
+    ctx.lineWidth = 1;
+  }
+}
+
+function drawPlayer(){
+  const x = player.x, y = player.y, a = Math.atan2(player.fy, player.fx);
+  ctx.fillStyle = "rgba(0,0,0,0.4)";
+  ctx.beginPath(); ctx.ellipse(x, y + 10, 11, 5, 0, 0, 7); ctx.fill();
+  ctx.fillStyle = "#2f5d8a"; ctx.beginPath(); ctx.arc(x, y, 13, 0, 7); ctx.fill(); // coat
+  ctx.strokeStyle = "#1d3d5c"; ctx.stroke();
+  ctx.fillStyle = "#e8b88a"; ctx.beginPath(); ctx.arc(x, y, 7.5, 0, 7); ctx.fill(); // head
+  ctx.fillStyle = "#1c3a5c"; // cap on the back of the head
+  ctx.beginPath(); ctx.arc(x, y, 7.6, a + Math.PI - 1.15, a + Math.PI + 1.15); ctx.fill();
+  ctx.fillStyle = flashlight ? "#ffe98a" : "#888"; // flashlight in hand
+  ctx.beginPath(); ctx.arc(x + Math.cos(a) * 12, y + Math.sin(a) * 12, 2.5, 0, 7); ctx.fill();
+}
+
+function drawDog(){
+  const x = dog.x, y = dog.y;
+  const a = Math.atan2(player.y - y, player.x - x);
+  const bounce = dog.happy > 0 ? Math.abs(Math.sin(time * 14)) * 3 : 0;
+  const by = y - bounce;
+  ctx.fillStyle = "rgba(0,0,0,0.35)";
+  ctx.beginPath(); ctx.ellipse(x, y + 8, 9, 4, 0, 0, 7); ctx.fill();
+  const tw = Math.sin(dog.wag) * 0.6; // wagging tail
+  ctx.strokeStyle = "#7a4e24"; ctx.lineWidth = 3;
+  ctx.beginPath();
+  ctx.moveTo(x - Math.cos(a) * 10, by - Math.sin(a) * 10);
+  ctx.lineTo(x - Math.cos(a + tw) * 16, by - Math.sin(a + tw) * 16);
+  ctx.stroke(); ctx.lineWidth = 1;
+  ctx.fillStyle = "#9c6b30"; ctx.beginPath(); ctx.arc(x, by, 10, 0, 7); ctx.fill(); // body
+  ctx.strokeStyle = "#6d4718"; ctx.stroke();
+  const hx = x + Math.cos(a) * 8, hy = by + Math.sin(a) * 8; // head toward player
+  ctx.fillStyle = "#b07c3e"; ctx.beginPath(); ctx.arc(hx, hy, 6.5, 0, 7); ctx.fill();
+  ctx.fillStyle = "#6d4718"; // ears
+  ctx.beginPath(); ctx.arc(hx - Math.sin(a) * 5, hy + Math.cos(a) * 5, 2.6, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.arc(hx + Math.sin(a) * 5, hy - Math.cos(a) * 5, 2.6, 0, 7); ctx.fill();
+  ctx.fillStyle = "#222"; // nose
+  ctx.beginPath(); ctx.arc(hx + Math.cos(a) * 5, hy + Math.sin(a) * 5, 1.8, 0, 7); ctx.fill();
+}
+
+function drawHUD(){
+  ctx.fillStyle = "rgba(10,14,24,0.65)"; ctx.fillRect(12, 12, 172, 58);
+  ctx.strokeStyle = "rgba(255,255,255,0.12)"; ctx.strokeRect(12.5, 12.5, 172, 58);
+  ctx.fillStyle = "#e8ecf4"; ctx.font = "bold 15px monospace"; ctx.textAlign = "left";
+  ctx.fillText("Doors: " + checkedCount + " / 4", 24, 34);
+  ctx.fillStyle = "rgba(255,255,255,0.15)"; ctx.fillRect(24, 46, 118, 7);
+  ctx.fillStyle = stamina > 25 ? "#ffd75e" : "#ff7a5e";
+  ctx.fillRect(24, 46, 118 * stamina / 100, 7);
+  ctx.strokeStyle = "rgba(255,255,255,0.25)"; ctx.strokeRect(24.5, 46.5, 118, 7);
+  ctx.font = "10px monospace"; ctx.fillStyle = "rgba(255,255,255,0.55)";
+  ctx.fillText("SPRINT", 24, 64);
+  ctx.textAlign = "right";
+  ctx.fillStyle = flashlight ? "#ffe98a" : "rgba(255,255,255,0.4)";
+  ctx.fillText(flashlight ? "🔦 ON [F]" : "🔦 OFF [F]", 174, 64);
+  ctx.textAlign = "left";
+  if (helpFade > 0){
+    ctx.globalAlpha = Math.min(1, helpFade);
+    ctx.fillStyle = "rgba(10,14,24,0.7)"; ctx.fillRect(60, H - 38, W - 120, 26);
+    ctx.fillStyle = "#cfe0ff"; ctx.font = "12px monospace"; ctx.textAlign = "center";
+    ctx.fillText("Stand by a door 2s to check · Move: WASD/Arrows · Shift: sprint · F: light · E: pet dog", W/2, H - 21);
+    ctx.globalAlpha = 1; ctx.textAlign = "left";
+  }
+}
+
+function drawWin(){
+  ctx.fillStyle = "rgba(4,6,14,0.82)"; ctx.fillRect(0, 0, W, H);
+  ctx.textAlign = "center";
+  ctx.fillStyle = "#7CFC9A"; ctx.font = "bold 30px monospace";
+  ctx.fillText("All doors checked!", W/2, H/2 - 42);
+  ctx.fillStyle = "#e8ecf4"; ctx.font = "bold 20px monospace";
+  ctx.fillText("Shift complete! 🎉", W/2, H/2 - 8);
+  ctx.font = "14px monospace"; ctx.fillStyle = "#9fb2d0";
+  ctx.fillText("The dog wags its tail approvingly. 🐕", W/2, H/2 + 24);
+  if (Math.sin(time * 4) > -0.3){
+    ctx.fillStyle = "#ffd75e";
+    ctx.fillText("Press R to restart", W/2, H/2 + 58);
+  }
+  ctx.textAlign = "left";
+}
+
+function draw(){
+  ctx.fillStyle = "#1a2230"; ctx.fillRect(0, 0, W, H);
+  ctx.strokeStyle = "rgba(255,255,255,0.03)"; ctx.beginPath();
+  for (let x = 40; x < W; x += 40){ ctx.moveTo(x, 0); ctx.lineTo(x, H); }
+  for (let y = 40; y < H; y += 40){ ctx.moveTo(0, y); ctx.lineTo(W, y); }
+  ctx.stroke();
+  ctx.fillStyle = "#274b34"; ctx.fillRect(358, 556, 84, 16); // entrance mat
+  ctx.fillStyle = "rgba(255,255,255,0.18)"; ctx.font = "10px monospace"; ctx.textAlign = "center";
+  ctx.fillText("ENTRANCE", 400, 568); ctx.textAlign = "left";
+  for (const d of decor) drawDecor(d);
+  for (const w of walls){
+    ctx.fillStyle = "#3a4558"; ctx.fillRect(w.x, w.y, w.w, w.h);
+    ctx.fillStyle = "rgba(255,255,255,0.07)"; ctx.fillRect(w.x, w.y, w.w, 3);
+  }
+  for (const d of doors){
+    ctx.fillStyle = "#7a5a34"; ctx.fillRect(d.sx, d.sy, d.w, d.h);
+    ctx.strokeStyle = "#4c3820"; ctx.strokeRect(d.sx + 2.5, d.sy + 2.5, d.w - 5, d.h - 5);
+  }
+  drawDog();
+  drawPlayer();
+  drawDarkness();
+  for (const d of doors) drawLamp(d); // lamps glow through the dark
+  ctx.textAlign = "center";
+  for (const p of popups){
+    ctx.globalAlpha = Math.max(0, Math.min(1, p.life * 2));
+    ctx.fillStyle = p.c; ctx.font = "bold 15px monospace";
+    ctx.fillText(p.t, p.x, p.y);
+  }
+  ctx.globalAlpha = 1; ctx.textAlign = "left";
+  drawHUD();
+  if (won) drawWin();
+}
+
+// ---------- Main loop ----------
+let last = performance.now();
+function loop(t){
+  const dt = Math.min(0.05, (t - last) / 1000);
+  last = t;
+  update(dt);
+  draw();
+  requestAnimationFrame(loop);
+}
+reset();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>

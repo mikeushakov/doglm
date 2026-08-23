@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Firefly Meadow</title>
+<style>
+  html, body { margin: 0; padding: 0; background: #0d0d17; }
+  body {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: sans-serif;
+  }
+  canvas {
+    border-radius: 8px;
+    box-shadow: 0 0 40px rgba(0, 0, 0, 0.8), 0 0 120px rgba(100, 90, 180, 0.15);
+  }
+</style>
+</head>
+<body>
+<canvas id="game" width="800" height="600"></canvas>
+<script>
+'use strict';
+
+// ---------- Setup ----------
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const W = canvas.width, H = canvas.height;
+const FIREFLY_COUNT = 8;
+const POND = { x: 700, y: 522, rx: 92, ry: 58 };
+
+const keys = {};
+let state = null;
+
+const rand = (a, b) => a + Math.random() * (b - a);
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const dist = (ax, ay, bx, by) => Math.hypot(ax - bx, ay - by);
+
+function inPond(x, y, pad) {
+  const dx = (x - POND.x) / (POND.rx + pad);
+  const dy = (y - POND.y) / (POND.ry + pad);
+  return dx * dx + dy * dy < 1;
+}
+
+// ---------- World creation ----------
+function makeDecorations() {
+  const deco = [];
+  let tries = 0;
+  while (deco.length < 18 && tries++ < 300) {
+    const x = rand(25, W - 25), y = rand(25, H - 25);
+    if (inPond(x, y, 12) || dist(x, y, W / 2, H - 70) < 70) continue;
+    deco.push({ type: 'grass', x, y, h: rand(6, 11), tilt: rand(-3, 3) });
+  }
+  const flowers = ['🌼', '🌷', '🌸'];
+  let n = 0; tries = 0;
+  while (n < 6 && tries++ < 300) {
+    const x = rand(30, W - 30), y = rand(30, H - 30);
+    if (inPond(x, y, 18) || dist(x, y, W / 2, H - 70) < 70) continue;
+    deco.push({ type: 'flower', x, y, e: flowers[n % flowers.length] });
+    n++;
+  }
+  return deco;
+}
+
+function spawnFirefly() {
+  let x = 0, y = 0, tries = 0;
+  do {
+    x = rand(40, W - 40);
+    y = rand(40, H - 40);
+  } while (dist(x, y, W / 2, H - 70) < 140 && tries++ < 100);
+  return {
+    x, y,
+    angle: rand(0, Math.PI * 2),
+    speed: rand(18, 38),
+    phase: rand(0, Math.PI * 2),
+    pulse: rand(1.4, 2.6)
+  };
+}
+
+function init() {
+  let dx = 0, dy = 0, tries = 0;
+  do {
+    dx = rand(120, W - 120);
+    dy = rand(90, 280);
+  } while (inPond(dx, dy, 30) && tries++ < 50);
+  state = {
+    player: { x: W / 2, y: H - 70 },
+    fireflies: Array.from({ length: FIREFLY_COUNT }, spawnFirefly),
+    dog: { x: dx, y: dy, angle: rand(0, Math.PI * 2), speed: 26, turn: 0, point: 0, barkCd: 0, flip: false },
+    deco: makeDecorations(),
+    particles: [],
+    popups: [],
+    caught: 0,
+    won: false,
+    instr: 9
+  };
+}
+
+// ---------- Effects ----------
+function burst(x, y, n) {
+  for (let i = 0; i < n; i++) {
+    const a = rand(0, Math.PI * 2), s = rand(30, 115), L = rand(0.4, 0.9);
+    state.particles.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: L, max: L, size: rand(1.5, 3.2) });
+  }
+}
+
+function updateFx(dt) {
+  for (let i = state.particles.length - 1; i >= 0; i--) {
+    const q = state.particles[i];
+    q.x += q.vx * dt; q.y += q.vy * dt;
+    q.vx *= 0.94; q.vy *= 0.94;
+    q.life -= dt;
+    if (q.life <= 0) state.particles.splice(i, 1);
+  }
+  for (let i = state.popups.length - 1; i >= 0; i--) {
+    const q = state.popups[i];
+    q.y -= 26 * dt;
+    q.life -= dt;
+    if (q.life <= 0) state.popups.splice(i, 1);
+  }
+}
+
+// ---------- Update ----------
+function update(dt) {
+  if (state.instr > 0) state.instr -= dt * (state.caught > 0 ? 2.5 : 1);
+
+  // Player movement: WASD + arrows, hold Shift to run
+  const p = state.player;
+  let mx = 0, my = 0;
+  if (keys['arrowleft'] || keys['a']) mx -= 1;
+  if (keys['arrowright'] || keys['d']) mx += 1;
+  if (keys['arrowup'] || keys['w']) my -= 1;
+  if (keys['arrowdown'] || keys['s']) my += 1;
+  if (mx !== 0 || my !== 0) {
+    const len = Math.hypot(mx, my);
+    const spd = keys['shift'] ? 235 : 140;
+    p.x = clamp(p.x + (mx / len) * spd * dt, 18, W - 18);
+    p.y = clamp(p.y + (my / len) * spd * dt, 18, H - 18);
+  }
+
+  // Fireflies: smooth random walk, always kept inside the canvas
+  for (const f of state.fireflies) {
+    f.angle += rand(-1, 1) * 2.2 * dt;
+    f.x += Math.cos(f.angle) * f.speed * dt;
+    f.y += Math.sin(f.angle) * f.speed * dt;
+    if (f.x < 16) { f.x = 16; f.angle = Math.PI - f.angle; }
+    if (f.x > W - 16) { f.x = W - 16; f.angle = Math.PI - f.angle; }
+    if (f.y < 16) { f.y = 16; f.angle = -f.angle; }
+    if (f.y > H - 16) { f.y = H - 16; f.angle = -f.angle; }
+  }
+
+  // Catching fireflies by touch
+  for (let i = state.fireflies.length - 1; i >= 0; i--) {
+    const f = state.fireflies[i];
+    if (dist(p.x, p.y, f.x, f.y) < 26) {
+      state.fireflies.splice(i, 1);
+      state.caught++;
+      const lastOne = state.caught === FIREFLY_COUNT;
+      burst(f.x, f.y, lastOne ? 34 : 14);
+      state.popups.push({ x: f.x, y: f.y - 12, text: '+1', life: 1, max: 1, color: '#fff3a0', size: 18 });
+      if (lastOne) state.won = true;
+    }
+  }
+
+  // Dog: slow wandering; touching it makes it sniff out the nearest firefly
+  const d = state.dog;
+  d.turn -= dt;
+  if (d.turn <= 0) { d.angle = rand(0, Math.PI * 2); d.turn = rand(1.2, 3); }
+  d.x += Math.cos(d.angle) * d.speed * dt;
+  d.y += Math.sin(d.angle) * d.speed * dt;
+  if (d.x < 26 || d.x > W - 26) { d.angle = Math.PI - d.angle; d.x = clamp(d.x, 26, W - 26); }
+  if (d.y < 26 || d.y > H - 26) { d.angle = -d.angle; d.y = clamp(d.y, 26, H - 26); }
+  d.flip = Math.cos(d.angle) < 0;
+  d.barkCd -= dt;
+  d.point = Math.max(0, d.point - dt);
+  if (d.barkCd <= 0 && state.fireflies.length > 0 && dist(p.x, p.y, d.x, d.y) < 46) {
+    d.barkCd = 6;
+    d.point = 2.6;
+    state.popups.push({ x: d.x, y: d.y - 24, text: 'Woof!', life: 1.2, max: 1.2, color: '#ffffff', size: 14 });
+  }
+
+  updateFx(dt);
+}
+
+// ---------- Drawing ----------
+function roundRect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function drawPond(t) {
+  ctx.fillStyle = '#1e3a50';
+  ctx.beginPath(); ctx.ellipse(POND.x, POND.y, POND.rx, POND.ry, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#2b506e';
+  ctx.beginPath(); ctx.ellipse(POND.x, POND.y, POND.rx - 10, POND.ry - 8, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = 'rgba(200, 225, 255, 0.12)';
+  ctx.lineWidth = 2;
+  for (let i = 0; i < 2; i++) {
+    const rr = 14 + i * 16 + 4 * Math.sin(t * 1.5 + i * 2);
+    ctx.beginPath(); ctx.ellipse(POND.x - 12, POND.y - 4, rr, rr * 0.55, 0, 0, Math.PI * 2); ctx.stroke();
+  }
+  ctx.strokeStyle = '#173041';
+  ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.ellipse(POND.x, POND.y, POND.rx, POND.ry, 0, 0, Math.PI * 2); ctx.stroke();
+  ctx.fillStyle = '#2f5d43';
+  ctx.beginPath(); ctx.arc(POND.x - 40, POND.y + 12, 9, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.arc(POND.x + 30, POND.y - 16, 7, 0, Math.PI * 2); ctx.fill();
+}
+
+function drawDeco(d) {
+  if (d.type === 'grass') {
+    ctx.strokeStyle = '#3c6449';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let i = -1; i <= 1; i++) {
+      ctx.moveTo(d.x, d.y);
+      ctx.lineTo(d.x + i * 3 + d.tilt, d.y - d.h - Math.abs(i) * 1.5);
+    }
+    ctx.stroke();
+  } else {
+    ctx.font = '15px serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(d.e, d.x, d.y);
+  }
+}
+
+function drawHint(t) {
+  const d = state.dog;
+  if (d.point <= 0 || state.fireflies.length === 0) return;
+  let best = null, bd = Infinity;
+  for (const f of state.fireflies) {
+    const dd = dist(d.x, d.y, f.x, f.y);
+    if (dd < bd) { bd = dd; best = f; }
+  }
+  if (!best) return;
+  ctx.save();
+  ctx.globalAlpha = clamp(d.point / 0.5, 0, 1) * 0.85;
+  ctx.strokeStyle = '#ffe97a';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(best.x, best.y, 15 + 3 * Math.sin(t * 6), 0, Math.PI * 2);
+  ctx.stroke();
+  const a = Math.atan2(best.y - d.y, best.x - d.x);
+  const sx = d.x + Math.cos(a) * 24, sy = d.y + Math.sin(a) * 24;
+  const tx = d.x + Math.cos(a) * 46, ty = d.y + Math.sin(a) * 46;
+  ctx.beginPath();
+  ctx.moveTo(sx, sy); ctx.lineTo(tx, ty);
+  ctx.moveTo(tx, ty); ctx.lineTo(tx + Math.cos(a + 2.6) * 9, ty + Math.sin(a + 2.6) * 9);
+  ctx.moveTo(tx, ty); ctx.lineTo(tx + Math.cos(a - 2.6) * 9, ty + Math.sin(a - 2.6) * 9);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawFireflies(t) {
+  for (const f of state.fireflies) {
+    const pulse = 0.5 + 0.5 * Math.sin(t * f.pulse * 2 + f.phase);
+    const near = dist(state.player.x, state.player.y, f.x, f.y) < 140;
+    const R = (near ? 30 : 20) * (0.65 + 0.5 * pulse);
+    const alpha = (near ? 0.5 : 0.32) + 0.3 * pulse;
+    const gr = ctx.createRadialGradient(f.x, f.y, 0, f.x, f.y, R);
+    gr.addColorStop(0, 'rgba(255, 244, 160, ' + alpha + ')');
+    gr.addColorStop(0.4, 'rgba(255, 230, 120, ' + alpha * 0.5 + ')');
+    gr.addColorStop(1, 'rgba(255, 220, 100, 0)');
+    ctx.fillStyle = gr;
+    ctx.beginPath(); ctx.arc(f.x, f.y, R, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = 'rgba(255, 250, 205, ' + (0.7 + 0.3 * pulse) + ')';
+    ctx.beginPath(); ctx.arc(f.x, f.y, 2.6, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+function drawDog(d) {
+  ctx.save();
+  ctx.translate(d.x, d.y);
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.25)';
+  ctx.beginPath(); ctx.ellipse(0, 11, 13, 5, 0, 0, Math.PI * 2); ctx.fill();
+  if (d.flip) ctx.scale(-1, 1);
+  ctx.font = '26px serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('🐕', 0, 0);
+  ctx.restore();
+}
+
+function drawPlayer(p) {
+  const pg = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, 72);
+  pg.addColorStop(0, 'rgba(255, 224, 160, 0.10)');
+  pg.addColorStop(1, 'rgba(255, 224, 160, 0)');
+  ctx.fillStyle = pg;
+  ctx.beginPath(); ctx.arc(p.x, p.y, 72, 0, Math.PI * 2); ctx.fill();
+
+  ctx.save();
+  ctx.translate(p.x, p.y);
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+  ctx.beginPath(); ctx.ellipse(0, 13, 11, 5, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.font = '30px serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('🧍', 0, 0);
+  ctx.restore();
+}
+
+function drawHud(t) {
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+  roundRect(12, 12, 172, 38, 10);
+  ctx.fill();
+  const pr = 9 + 2 * Math.sin(t * 3);
+  const hg = ctx.createRadialGradient(30, 31, 0, 30, 31, pr + 5);
+  hg.addColorStop(0, 'rgba(255, 240, 150, 0.9)');
+  hg.addColorStop(1, 'rgba(255, 240, 150, 0)');
+  ctx.fillStyle = hg;
+  ctx.beginPath(); ctx.arc(30, 31, pr + 5, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#fff6c0';
+  ctx.beginPath(); ctx.arc(30, 31, 2.6, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = '#f2f0e4';
+  ctx.font = 'bold 16px sans-serif';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('Fireflies: ' + state.caught + ' / ' + FIREFLY_COUNT, 46, 31);
+}
+
+function drawInstructions() {
+  ctx.globalAlpha = clamp(state.instr, 0, 1);
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+  roundRect(W / 2 - 295, H - 48, 590, 34, 10);
+  ctx.fill();
+  ctx.fillStyle = '#eae8da';
+  ctx.font = '15px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('Catch all 8 fireflies!   Move: WASD / Arrows · Run: Shift · Touch the dog for a hint', W / 2, H - 31);
+  ctx.globalAlpha = 1;
+}
+
+function drawVictory(t) {
+  ctx.fillStyle = 'rgba(8, 8, 24, 0.68)';
+  ctx.fillRect(0, 0, W, H);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#fff2ae';
+  ctx.font = 'bold 34px sans-serif';
+  ctx.fillText('All fireflies caught! You win!', W / 2, H / 2 - 40);
+  ctx.font = '26px serif';
+  ctx.fillText('✨ 🐕 ✨', W / 2, H / 2 + 6 + Math.sin(t * 2) * 4);
+  ctx.fillStyle = '#dcdaca';
+  ctx.font = '17px sans-serif';
+  ctx.fillText('Press R to restart', W / 2, H / 2 + 52);
+}
+
+function render(t) {
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, '#3f3960');
+  g.addColorStop(0.45, '#324659');
+  g.addColorStop(1, '#294537');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+
+  drawPond(t);
+  for (const d of state.deco) drawDeco(d);
+  drawHint(t);
+  drawFireflies(t);
+  drawDog(state.dog);
+  drawPlayer(state.player);
+
+  for (const q of state.particles) {
+    ctx.globalAlpha = clamp(q.life / q.max, 0, 1);
+    ctx.fillStyle = '#ffe98a';
+    ctx.beginPath(); ctx.arc(q.x, q.y, q.size, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  for (const q of state.popups) {
+    ctx.globalAlpha = clamp(q.life / q.max, 0, 1);
+    ctx.font = 'bold ' + q.size + 'px sans-serif';
+    ctx.fillStyle = q.color;
+    ctx.fillText(q.text, q.x, q.y);
+  }
+  ctx.globalAlpha = 1;
+
+  const v = ctx.createRadialGradient(W / 2, H / 2, H * 0.35, W / 2, H / 2, H * 0.85);
+  v.addColorStop(0, 'rgba(10, 8, 30, 0)');
+  v.addColorStop(1, 'rgba(10, 8, 30, 0.45)');
+  ctx.fillStyle = v;
+  ctx.fillRect(0, 0, W, H);
+
+  drawHud(t);
+  if (state.instr > 0) drawInstructions();
+  if (state.won) drawVictory(t);
+}
+
+// ---------- Input ----------
+window.addEventListener('keydown', (e) => {
+  const k = e.key.toLowerCase();
+  if (k === 'arrowup' || k === 'arrowdown' || k === 'arrowleft' || k === 'arrowright' || k === ' ') e.preventDefault();
+  keys[k] = true;
+  if (state.won && k === 'r') init();
+});
+window.addEventListener('keyup', (e) => { keys[e.key.toLowerCase()] = false; });
+window.addEventListener('blur', () => { for (const k in keys) keys[k] = false; });
+
+// ---------- Main loop ----------
+init();
+let last = performance.now();
+requestAnimationFrame(function loop(now) {
+  const dt = Math.min((now - last) / 1000, 0.05);
+  last = now;
+  if (state.won) updateFx(dt); else update(dt);
+  render(now / 1000);
+  requestAnimationFrame(loop);
+});
+</script>
+</body>
+</html>
