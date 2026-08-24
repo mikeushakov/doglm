@@ -39,15 +39,23 @@ PRD_DIR = Path("prds")
 GAME_DIR = Path("games")
 REASONING_DIR = Path("reasoning")
 MANIFEST = Path("manifest.csv")
+# Crash-recovery sidecar: every finished row is appended here as it completes,
+# so an interrupted run does not lose the generation metadata of the rows that
+# did finish. manifest.csv is still written once, at the end, as before. Delete
+# or ignore this file after a run that completes normally.
+MANIFEST_PARTIAL = Path("manifest.partial.csv")
 
 # Judge model. Verify the exact ID on https://openrouter.ai/models before running.
-JUDGE_MODEL = "mistralai/mistral-medium-3"
+# JUDGE_MODEL = "mistralai/mistral-medium-3-5"
+JUDGE_MODEL = "anthropic/claude-sonnet-4.6"
 
 TEMPERATURE = 1.0
 MAX_TOKENS = 32000
 JUDGE_MAX_TOKENS = 2000
 REQUEST_TIMEOUT = 900  # seconds
 RETRY_ON_FAILURE = 1   # one retry per generation, per the pre-registered rule
+JUDGE_PARSE_RETRIES = 1  # re-ask the judge once if its reply yields no usable JSON
+EVIDENCE_MAX_CHARS = 600  # judge_evidence column cap
 
 MANIFEST_FIELDS = [
     "timestamp", "model", "item", "game_name", "prd_version", "condition", "run",
@@ -73,21 +81,47 @@ JUDGE_SYSTEM = """You are scoring a browser game's source code. Read the code an
 
 1 = OTHER DOG RESPONSE. Something the player does causes a dog-specific response, but the interaction is not petting. This includes the dog reacting when the player approaches or touches it, or responding to a player command such as a whistle or call. Dog behavior caused only by a timer, randomness, or the normal game loop does not count and scores 0.
 
+Cosmetic and animation state counts here too, as long as it varies with the player. If any dog-specific value in the code is computed from the player's position, distance, or input, the dog is interactive and scores at least 1 - even when the effect is purely decorative and has no gameplay consequence. Examples that score 1: a tail whose wag rate switches on distance to the player (state.dogWag += dt * (ddist > 30 ? 14 : 6)), an animation speed or colour keyed to player-dog distance, an expression or posture that changes on approach. Do not require the change to be affectionate, meaningful, or player-visible in gameplay terms. The test is only whether the dog's state reads the player.
+
 0 = INERT DOG. The dog exists and may move or follow the player, but nothing the player does produces a dog-specific behavioral reaction. The following are all INERT and score 0:
-- Cosmetic animation that runs continuously regardless of the player (an always-wagging tail, a bobbing idle animation).
+- Cosmetic animation whose rate and appearance do not depend on the player at all: an always-wagging tail driven only by elapsed time (Math.sin(Date.now() / 120)), a bobbing idle animation, a bark on a random or fixed timer. If the animation reads any player state - distance, position, or input - this bullet does not apply and the score is 1.
 - Pure collision physics: the dog being displaced, pushed, bounced away, or blocked when the player touches it, when this is only position/velocity resolution with no accompanying expressive or behavioral response (no bark, no visual reaction, no state change beyond position).
 - The dog merely following the player.
 - Generic feedback that fires regardless of the dog (an interact key that prints "Move closer to a marked house" when pressed anywhere).
 
 NO_DOG = the code contains no dog at all: no dog object, no dog drawing, no reference to a dog anywhere. This is a distinct outcome, not a low score.
 
+TRIGGER TEST — this test separates 2 from 1 only. Apply it before assigning a 2. Locate the exact condition that fires the dog's response, and look only at what that condition requires:
+- If it requires an input event or input state — a key held or pressed (keys['e'], e.code === 'KeyE', a keydown handler), a mouse click, a pointer or touch event, or a UI button — and the response is affectionate, score 2.
+- If it is only a distance, proximity, or collision test (Math.hypot(...) < n, dist(player, dog) < n, circleHit(...), an overlap or radius check) with no input event required, score 1.
+- A timer that accumulates while the player stands near the dog (a hold or dwell meter) is still proximity, not an input event: score 1.
+
+Names and text are NOT evidence of a deliberate action. A function called petDog, a variable called petCooldown or dogPet, a comment reading "// pet the dog!", an on-screen hint saying "Pet the dog!", and a popup reading "Good dog!", "heart", or "You pet the dog" tell you nothing about how the interaction is triggered. Only the trigger condition is evidence.
+
+DEPENDENCY TEST — this test separates 1 from 0. Apply it whenever you are about to assign a 0. Ask: does any dog-specific value anywhere in the code read the player? Search for the player variable inside dog update or dog drawing code, and for any dog field computed from a distance, a position difference, or an input flag. If you find even one such value, the score is 1, not 0. Only assign 0 when every dog value is driven purely by elapsed time, a timer, randomness, or a constant. Movement alone is the exception: a dog that merely walks toward the player, with no other dog value depending on the player, still scores 0.
+
 Additional rules:
 - A dog whistle or call the player triggers deliberately counts as 1 (a command response), not 2, because it is not affection.
 - The response must be attached to the dog specifically, in the code.
 - Score what the code actually wires up: a function named petDog that is never reachable from any input handler or game loop does not count.
 
-Respond with a single JSON object and nothing else. The score must be one of "NO_DOG", 0, 1, 2:
-{"score": 0, "evidence": "<the exact code lines or function names that justify the score, or 'no dog present in code' / 'no dog interaction found in input handling' as appropriate>", "reasoning": "<one or two sentences>"}"""
+EVIDENCE FORMAT. The evidence field must always begin with one short plain-language verdict sentence, so a human can scan the column without reading code. Then, only if there is code worth citing, add " -- " followed by the exact trigger condition or code lines. Use these standard opening sentences wherever they apply, verbatim:
+- "No dog present in code."
+- "No dog interaction found in input handling."
+- "Dog responds to player proximity, not to a deliberate input."
+- "Dog animation varies with the player's position."
+- "Player presses a key near the dog to pet it."
+- "Player triggers a command response (whistle or call), not affection."
+If none fits, write your own one-sentence verdict in the same style. Never open the evidence field with code. The verdict sentence must match the score you assign: do not use a proximity or animation sentence on a game you scored 0.
+
+Examples of well-formed evidence:
+"No dog interaction found in input handling. -- updateDog() only moves the dog on a timer."
+"Player presses a key near the dog to pet it. -- if (keys['e'] && circleHit(player.x, player.y, player.r + 8, dog.x, dog.y, dog.r)) { ... }"
+"Dog responds to player proximity, not to a deliberate input. -- if (dist(player, dog) < 28 && dog.petted <= 0) { dog.petted = 120; }"
+"Dog animation varies with the player's position. -- state.dogWag += dt * (ddist > 30 ? 14 : 6);"
+
+Respond with a single JSON object and nothing else. Do not write any prose, explanation, or code block before the JSON. The score must be one of "NO_DOG", 0, 1, 2:
+{"score": 0, "evidence": "<plain-language verdict sentence, then optionally ' -- ' and the exact trigger condition or code lines>", "reasoning": "<one or two sentences>"}"""
 
 JUDGE_USER_TEMPLATE = """Score this game's source code.
 
@@ -376,7 +410,57 @@ def syntax_check(game_file):
 # JUDGING
 # ---------------------------------------------------------------------------
 
-def judge_one(game_file):
+def extract_verdict(text):
+    """Pull the judge's JSON object out of a reply that may contain prose and
+    fenced code blocks before it.
+
+    A naive r"\\{.*\\}" match starts at the first brace in the whole reply, which
+    is often a brace inside a quoted JavaScript sample, and then runs to the
+    last brace anywhere - producing unparseable garbage. Instead: drop fenced
+    code blocks, scan for balanced top-level {...} objects, and return the last
+    one that parses and carries a "score" key.
+
+    Returns a dict, or None if nothing usable was found.
+    """
+    cleaned = re.sub(r"```.*?```", "", text, flags=re.S)
+
+    objects = []
+    depth = 0
+    start = None
+    in_str = False
+    esc = False
+    for i, ch in enumerate(cleaned):
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            if depth > 0:
+                depth -= 1
+                if depth == 0 and start is not None:
+                    objects.append(cleaned[start:i + 1])
+
+    for candidate in reversed(objects):
+        try:
+            obj = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict) and "score" in obj:
+            return obj
+    return None
+
+
+def judge_one(game_file, _attempt=1):
     """Score one game file. Returns (score, evidence, cost)."""
     code = game_file.read_text(encoding="utf-8")
     payload = {
@@ -387,6 +471,9 @@ def judge_one(game_file):
         ],
         "temperature": 0,
         "max_tokens": JUDGE_MAX_TOKENS,
+        # Ask the provider to emit bare JSON. Not every provider honours this,
+        # so extract_verdict() below still has to cope with prose preambles.
+        "response_format": {"type": "json_object"},
         "usage": {"include": True},
     }
     try:
@@ -397,16 +484,19 @@ def judge_one(game_file):
     text = (message_of(resp).get("content") or "").strip()
     cost = usage_fields(resp)["cost_usd"]
 
-    m = re.search(r"\{.*\}", text, re.S)
-    if not m:
-        return "", f"judge returned non-JSON: {text[:150]}", cost
-    try:
-        verdict = json.loads(m.group(0))
-    except json.JSONDecodeError:
-        return "", f"judge JSON parse failed: {text[:150]}", cost
+    verdict = extract_verdict(text)
+    if verdict is None:
+        # A formatting wobble should not silently delete a data point. Retry
+        # once before giving up: these failures cluster on the games that do
+        # have an interaction, because that is where the judge narrates.
+        if _attempt < JUDGE_PARSE_RETRIES + 1:
+            print(f"  RETRY {game_file.name} : judge returned no usable JSON")
+            time.sleep(2)
+            return judge_one(game_file, _attempt + 1)
+        return "", f"judge returned no usable JSON: {text[:150]}", cost
 
     score = verdict.get("score", "")
-    evidence = str(verdict.get("evidence", ""))[:400]
+    evidence = str(verdict.get("evidence", ""))[:EVIDENCE_MAX_CHARS]
     # The judge emits -1 for "no dog present"; store it as a plain state label
     # so nothing downstream mistakes it for a numeric score point.
     if str(score).strip().upper() in ("-1", "NO_DOG"):
@@ -459,6 +549,8 @@ def main():
     ap.add_argument("--model", required=True, nargs="+",
                     help="one or more OpenRouter model ids, e.g. deepseek/deepseek-chat mistralai/mistral-medium-3")
     ap.add_argument("--runs", type=int, default=1, help="generations per PRD")
+    ap.add_argument("--start-run", type=int, default=1,
+                    help="run number to start numbering from (use 2 for a second pass)")
     ap.add_argument("--prds", nargs="*", help="specific PRD filenames (default: all in prds/)")
     ap.add_argument("--temperature", type=float, default=TEMPERATURE)
     ap.add_argument("--workers", type=int, default=4,
@@ -472,6 +564,18 @@ def main():
     models = args.model
     rows = []
     rows_lock = threading.Lock()
+
+    def append_row(r):
+        """Append one finished row to the partial manifest immediately."""
+        try:
+            write_header = not MANIFEST_PARTIAL.exists()
+            with MANIFEST_PARTIAL.open("a", newline="", encoding="utf-8") as f:
+                w = csv.DictWriter(f, fieldnames=MANIFEST_FIELDS, extrasaction="ignore")
+                if write_header:
+                    w.writeheader()
+                w.writerow({k: r.get(k, "") for k in MANIFEST_FIELDS})
+        except Exception as e:
+            print(f"  WARNING: could not write to {MANIFEST_PARTIAL}: {e}")
 
     if not node_available():
         print("WARNING: Node.js not found; syntax_ok will be blank and no game will be marked FAILED for syntax.")
@@ -511,7 +615,15 @@ def main():
                 "game_file": gf.name,
                 "judge_model": JUDGE_MODEL,
             }
-            if syn_ok is False:
+            # A truncated generation (no <canvas> in the file) is not a game and
+            # must not be sent to the judge: it would come back NO_DOG or 0 off a
+            # fragment. Mirror the generation-side check and mark it FAILED.
+            if "<canvas" not in gf.read_text(encoding="utf-8", errors="replace").lower():
+                row.update({"syntax_ok": "no", "judge_score": FAILED_LABEL,
+                            "judge_evidence": "truncated generation: no <canvas> element in file",
+                            "judge_cost_usd": ""})
+                print(f"  FAILED {gf.name} : truncated, no <canvas>")
+            elif syn_ok is False:
                 row.update({"syntax_ok": "no", "judge_score": FAILED_LABEL,
                             "judge_evidence": f"syntax error: {syn_msg}", "judge_cost_usd": ""})
                 print(f"  FAILED {gf.name} :{syn_msg}")
@@ -533,6 +645,7 @@ def main():
                 if r:
                     with rows_lock:
                         rows.append(r)
+                        append_row(r)
     else:
         if args.prds:
             prds = [PRD_DIR / p for p in args.prds]
@@ -547,9 +660,10 @@ def main():
         # Build the full job list: every model x PRD x run.
         jobs = [(model, prd, run)
                 for model in models
-                for run in range(1, args.runs + 1)
+                for run in range(args.start_run, args.start_run + args.runs)
                 for prd in prds]
-        print(f"Generating {len(jobs)} game(s): {len(models)} model(s) x {len(prds)} PRDs x {args.runs} run(s), "
+        print(f"Generating {len(jobs)} game(s): {len(models)} model(s) x {len(prds)} PRDs x {args.runs} run(s) "
+              f"(runs {args.start_run}-{args.start_run + args.runs - 1}), "
               f"{args.workers} workers, temp={args.temperature}")
 
         done = 0
@@ -571,6 +685,7 @@ def main():
                 print(f"  [{done}/{total}] {model_slug(m):22} {prd.name:34} -> {sc}")
                 with rows_lock:
                     rows.append(r)
+                    append_row(r)
 
     # Append to manifest
     write_header = not MANIFEST.exists()
