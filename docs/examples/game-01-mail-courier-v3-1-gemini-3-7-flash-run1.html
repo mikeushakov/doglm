@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mail Courier</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+    }
+    body {
+      background-color: #1e242b;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    #gameCanvas {
+      display: block;
+      background-color: #79b05b;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+      border-radius: 8px;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="gameCanvas" width="800" height="600"></canvas>
+
+  <script>
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+
+    // Input state
+    const keys = {};
+    window.addEventListener('keydown', (e) => {
+      keys[e.key.toLowerCase()] = true;
+      if (['arrowup', 'arrowdown', 'arrowleft', 'arrowright', ' '].includes(e.key.toLowerCase())) {
+        e.preventDefault();
+      }
+      if (e.key.toLowerCase() === 'e') {
+        tryDeliver();
+      }
+      if (e.key.toLowerCase() === 'r' && gameState === 'won') {
+        resetGame();
+      }
+    });
+
+    window.addEventListener('keyup', (e) => {
+      keys[e.key.toLowerCase()] = false;
+    });
+
+    // Game variables
+    let gameState = 'playing';
+    let lettersDelivered = 0;
+    const totalLetters = 5;
+    let popups = [];
+
+    // Player
+    const player = {
+      x: 400,
+      y: 530,
+      radius: 14,
+      speed: 3.2,
+      facing: 'down'
+    };
+
+    // Dog companion
+    const dog = {
+      x: 370,
+      y: 540,
+      radius: 9,
+      speed: 2.8,
+      tailAngle: 0
+    };
+
+    // 5 Houses
+    const houses = [
+      { id: 1, x: 90,  y: 80,  w: 90, h: 75, roofColor: '#b84a39', wallColor: '#e3d2b8', delivered: false, doorSide: 'bottom' },
+      { id: 2, x: 620, y: 70,  w: 95, h: 80, roofColor: '#3c6e71', wallColor: '#e9d8a6', delivered: false, doorSide: 'bottom' },
+      { id: 3, x: 350, y: 220, w: 100, h: 80, roofColor: '#8f5c38', wallColor: '#f4ede2', delivered: false, doorSide: 'bottom' },
+      { id: 4, x: 100, y: 390, w: 90, h: 80, roofColor: '#5c4d7d', wallColor: '#ebd9c8', delivered: false, doorSide: 'right' },
+      { id: 5, x: 610, y: 380, w: 95, h: 75, roofColor: '#b36a3e', wallColor: '#f0e6d2', delivered: false, doorSide: 'left' }
+    ];
+
+    // Decorative Environment: Trees & Bushes
+    const trees = [
+      { x: 40,  y: 40,  r: 22 },
+      { x: 230, y: 60,  r: 20 },
+      { x: 550, y: 50,  r: 24 },
+      { x: 750, y: 40,  r: 22 },
+      { x: 50,  y: 260, r: 26 },
+      { x: 740, y: 240, r: 25 },
+      { x: 250, y: 430, r: 22 },
+      { x: 540, y: 440, r: 20 },
+      { x: 60,  y: 540, r: 24 },
+      { x: 740, y: 530, r: 26 },
+      { x: 400, y: 60,  r: 18 }
+    ];
+
+    const bushes = [
+      { x: 210, y: 150, r: 10 },
+      { x: 590, y: 170, r: 12 },
+      { x: 300, y: 270, r: 11 },
+      { x: 480, y: 270, r: 12 },
+      { x: 130, y: 490, r: 10 },
+      { x: 660, y: 480, r: 11 },
+      { x: 290, y: 540, r: 13 },
+      { x: 500, y: 540, r: 13 }
+    ];
+
+    // Paths connecting village
+    const paths = [
+      { x1: 400, y1: 560, x2: 400, y2: 320, w: 32 },
+      { x1: 400, y1: 340, x2: 150, y2: 340, w: 26 },
+      { x1: 150, y1: 340, x2: 150, y2: 175, w: 26 },
+      { x1: 150, y1: 340, x2: 150, y2: 380, w: 26 },
+      { x1: 400, y1: 340, x2: 660, y2: 340, w: 26 },
+      { x1: 660, y1: 340, x2: 660, y2: 165, w: 26 },
+      { x1: 660, y1: 340, x2: 660, y2: 370, w: 26 }
+    ];
+
+    function resetGame() {
+      gameState = 'playing';
+      lettersDelivered = 0;
+      popups = [];
+      player.x = 400;
+      player.y = 530;
+      player.facing = 'down';
+      dog.x = 370;
+      dog.y = 540;
+      houses.forEach(h => h.delivered = false);
+    }
+
+    // Check collision between a circle and an axis-aligned box
+    function checkCircleBoxCollision(px, py, radius, box) {
+      const closestX = Math.max(box.x, Math.min(px, box.x + box.w));
+      const closestY = Math.max(box.y, Math.min(py, box.y + box.h));
+      const dx = px - closestX;
+      const dy = py - closestY;
+      return (dx * dx + dy * dy) < (radius * radius);
+    }
+
+    // Distance from player to house
+    function getHouseDistance(p, house) {
+      const centerX = house.x + house.w / 2;
+      const centerY = house.y + house.h / 2;
+      return Math.hypot(p.x - centerX, p.y - centerY);
+    }
+
+    // Delivery Action
+    function tryDeliver() {
+      if (gameState !== 'playing') return;
+
+      for (let house of houses) {
+        if (!house.delivered) {
+          const dist = getHouseDistance(player, house);
+          // Delivery radius relative to house size
+          if (dist < 85) {
+            house.delivered = true;
+            lettersDelivered++;
+            popups.push({
+              text: 'Delivered! ✉️',
+              x: house.x + house.w / 2,
+              y: house.y - 15,
+              alpha: 1.0,
+              life: 60
+            });
+
+            if (lettersDelivered >= totalLetters) {
+              gameState = 'won';
+            }
+            break;
+          }
+        }
+      }
+    }
+
+    // Update game logic
+    function update() {
+      if (gameState !== 'won') {
+        // Player Movement
+        let dx = 0;
+        let dy = 0;
+
+        if (keys['w'] || keys['arrowup']) dy -= 1;
+        if (keys['s'] || keys['arrowdown']) dy += 1;
+        if (keys['a'] || keys['arrowleft']) dx -= 1;
+        if (keys['d'] || keys['arrowright']) dx += 1;
+
+        if (dx !== 0 && dy !== 0) {
+          dx *= 0.7071;
+          dy *= 0.7071;
+        }
+
+        if (dx !== 0 || dy !== 0) {
+          if (Math.abs(dx) > Math.abs(dy)) {
+            player.facing = dx > 0 ? 'right' : 'left';
+          } else {
+            player.facing = dy > 0 ? 'down' : 'up';
+          }
+        }
+
+        // Move X with collision
+        const nextX = player.x + dx * player.speed;
+        let collideX = false;
+        for (let house of houses) {
+          if (checkCircleBoxCollision(nextX, player.y, player.radius, house)) {
+            collideX = true;
+            break;
+          }
+        }
+        if (!collideX) {
+          player.x = Math.max(player.radius, Math.min(canvas.width - player.radius, nextX));
+        }
+
+        // Move Y with collision
+        const nextY = player.y + dy * player.speed;
+        let collideY = false;
+        for (let house of houses) {
+          if (checkCircleBoxCollision(player.x, nextY, player.radius, house)) {
+            collideY = true;
+            break;
+          }
+        }
+        if (!collideY) {
+          player.y = Math.max(player.radius, Math.min(canvas.height - player.radius, nextY));
+        }
+
+        // Dog Movement (smooth trailing follower)
+        const distToPlayer = Math.hypot(player.x - dog.x, player.y - dog.y);
+        const targetDist = 28;
+        if (distToPlayer > targetDist) {
+          const angle = Math.atan2(player.y - dog.y, player.x - dog.x);
+          const followSpeed = Math.min(dog.speed, (distToPlayer - targetDist) * 0.15);
+          dog.x += Math.cos(angle) * followSpeed;
+          dog.y += Math.sin(angle) * followSpeed;
+          dog.tailAngle = Math.sin(Date.now() * 0.015) * 0.4;
+        } else {
+          dog.tailAngle = Math.sin(Date.now() * 0.008) * 0.2;
+        }
+      }
+
+      // Update Popups
+      for (let i = popups.length - 1; i >= 0; i--) {
+        const p = popups[i];
+        p.y -= 0.6;
+        p.life--;
+        p.alpha = Math.max(0, p.life / 60);
+        if (p.life <= 0) {
+          popups.splice(i, 1);
+        }
+      }
+    }
+
+    // Render Functions
+    function drawPaths() {
+      ctx.strokeStyle = '#d7be8d';
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      for (let path of paths) {
+        ctx.lineWidth = path.w;
+        ctx.beginPath();
+        ctx.moveTo(path.x1, path.y1);
+        ctx.lineTo(path.x2, path.y2);
+        ctx.stroke();
+      }
+    }
+
+    function drawScenery() {
+      // Decorative Bushes
+      for (let b of bushes) {
+        ctx.fillStyle = '#568f3a';
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, b.r, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#68ab47';
+        ctx.beginPath();
+        ctx.arc(b.x - 2, b.y - 2, b.r * 0.7, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // Decorative Trees
+      for (let t of trees) {
+        // Shadow
+        ctx.fillStyle = 'rgba(0,0,0,0.15)';
+        ctx.beginPath();
+        ctx.ellipse(t.x + 3, t.y + 6, t.r, t.r * 0.6, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Canopy base
+        ctx.fillStyle = '#2d5e2e';
+        ctx.beginPath();
+        ctx.arc(t.x, t.y, t.r, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Canopy highlight
+        ctx.fillStyle = '#3e7a3a';
+        ctx.beginPath();
+        ctx.arc(t.x - 3, t.y - 4, t.r * 0.75, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    function drawHouses() {
+      for (let house of houses) {
+        // Shadow
+        ctx.fillStyle = 'rgba(0,0,0,0.2)';
+        ctx.fillRect(house.x + 6, house.y + 8, house.w, house.h);
+
+        // House Body
+        ctx.fillStyle = house.wallColor;
+        ctx.fillRect(house.x, house.y, house.w, house.h);
+        ctx.strokeStyle = '#5a4d41';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(house.x, house.y, house.w, house.h);
+
+        // Roof
+        ctx.fillStyle = house.roofColor;
+        ctx.beginPath();
+        ctx.moveTo(house.x - 6, house.y + 18);
+        ctx.lineTo(house.x + house.w / 2, house.y - 12);
+        ctx.lineTo(house.x + house.w + 6, house.y + 18);
+        ctx.closePath();
+        ctx.fill();
+        ctx.stroke();
+
+        // Door
+        ctx.fillStyle = '#6b4226';
+        if (house.doorSide === 'right') {
+          ctx.fillRect(house.x + house.w - 12, house.y + house.h / 2 - 8, 12, 18);
+        } else if (house.doorSide === 'left') {
+          ctx.fillRect(house.x, house.y + house.h / 2 - 8, 12, 18);
+        } else {
+          ctx.fillRect(house.x + house.w / 2 - 8, house.y + house.h - 18, 16, 18);
+        }
+
+        // Window
+        ctx.fillStyle = '#a8dadc';
+        ctx.fillRect(house.x + 14, house.y + 28, 14, 14);
+        ctx.strokeStyle = '#457b9d';
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(house.x + 14, house.y + 28, 14, 14);
+
+        // Mail Expecting Indicator (Envelope / Marker)
+        if (!house.delivered) {
+          const bounce = Math.sin(Date.now() * 0.006) * 4;
+          const markerX = house.x + house.w / 2;
+          const markerY = house.y - 24 + bounce;
+
+          // Marker bubble
+          ctx.fillStyle = '#ffffff';
+          ctx.beginPath();
+          ctx.arc(markerX, markerY, 15, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = '#e63946';
+          ctx.lineWidth = 2.5;
+          ctx.stroke();
+
+          // Envelope Emoji
+          ctx.font = '16px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText('✉️', markerX, markerY + 1);
+
+          // Interaction Prompt if nearby
+          const dist = getHouseDistance(player, house);
+          if (dist < 85 && gameState === 'playing') {
+            ctx.fillStyle = '#1d3557';
+            ctx.font = 'bold 12px sans-serif';
+            ctx.fillText('Press [E]', markerX, markerY - 22);
+          }
+        }
+      }
+    }
+
+    function drawDog() {
+      // Dog shadow
+      ctx.fillStyle = 'rgba(0,0,0,0.2)';
+      ctx.beginPath();
+      ctx.ellipse(dog.x, dog.y + 4, dog.radius, dog.radius * 0.6, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Dog body
+      ctx.fillStyle = '#c68642';
+      ctx.beginPath();
+      ctx.arc(dog.x, dog.y, dog.radius, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Dog Head
+      ctx.fillStyle = '#d89b58';
+      ctx.beginPath();
+      ctx.arc(dog.x + 3, dog.y - 3, dog.radius * 0.7, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Dog Ears
+      ctx.fillStyle = '#8d5524';
+      ctx.beginPath();
+      ctx.arc(dog.x + 1, dog.y - 7, 3, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Tail
+      ctx.strokeStyle = '#c68642';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(dog.x - 6, dog.y);
+      ctx.lineTo(dog.x - 12, dog.y - 4 + Math.sin(dog.tailAngle) * 5);
+      ctx.stroke();
+    }
+
+    function drawPlayer() {
+      // Player shadow
+      ctx.fillStyle = 'rgba(0,0,0,0.25)';
+      ctx.beginPath();
+      ctx.ellipse(player.x, player.y + 10, player.radius, player.radius * 0.5, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Body (Postal uniform blue)
+      ctx.fillStyle = '#1d3557';
+      ctx.beginPath();
+      ctx.arc(player.x, player.y, player.radius, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Mail bag strap
+      ctx.strokeStyle = '#a3704c';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(player.x, player.y, player.radius - 2, -0.8, 1.2);
+      ctx.stroke();
+
+      // Mail bag satchel
+      ctx.fillStyle = '#855432';
+      ctx.fillRect(player.x + 6, player.y + 2, 8, 7);
+
+      // Postman Cap
+      ctx.fillStyle = '#457b9d';
+      ctx.beginPath();
+      ctx.arc(player.x, player.y - 4, player.radius * 0.75, Math.PI, 0);
+      ctx.fill();
+
+      // Cap visor
+      ctx.fillStyle = '#1d3557';
+      ctx.beginPath();
+      if (player.facing === 'left') {
+        ctx.ellipse(player.x - 7, player.y - 4, 5, 2, 0, 0, Math.PI * 2);
+      } else if (player.facing === 'right') {
+        ctx.ellipse(player.x + 7, player.y - 4, 5, 2, 0, 0, Math.PI * 2);
+      } else {
+        ctx.ellipse(player.x, player.y - 2, 6, 2.5, 0, 0, Math.PI * 2);
+      }
+      ctx.fill();
+    }
+
+    function drawPopups() {
+      for (let p of popups) {
+        ctx.save();
+        ctx.globalAlpha = p.alpha;
+        ctx.font = 'bold 15px sans-serif';
+        ctx.textAlign = 'center';
+        // Shadow outline
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0.6)';
+        ctx.lineWidth = 3;
+        ctx.strokeText(p.text, p.x, p.y);
+        ctx.fillStyle = '#ffd166';
+        ctx.fillText(p.text, p.x, p.y);
+        ctx.restore();
+      }
+    }
+
+    function drawHUD() {
+      // Top HUD bar
+      ctx.fillStyle = 'rgba(29, 53, 87, 0.85)';
+      ctx.beginPath();
+      ctx.roundRect(16, 16, 250, 68, 8);
+      ctx.fill();
+      ctx.strokeStyle = '#a8dadc';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 16px sans-serif';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      ctx.fillText(`✉️ Letters: ${totalLetters - lettersDelivered} / ${totalLetters} remaining`, 28, 26);
+
+      ctx.font = '12px sans-serif';
+      ctx.fillStyle = '#e0e1dd';
+      ctx.fillText('Move: WASD / Arrows', 28, 48);
+      ctx.fillText('Deliver: E near house', 28, 64);
+
+      // Victory Overlay
+      if (gameState === 'won') {
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.75)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        // Victory Box
+        ctx.fillStyle = '#f1faee';
+        ctx.beginPath();
+        ctx.roundRect(canvas.width / 2 - 200, canvas.height / 2 - 90, 400, 180, 12);
+        ctx.fill();
+        ctx.strokeStyle = '#2a9d8f';
+        ctx.lineWidth = 4;
+        ctx.stroke();
+
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#1d3557';
+        ctx.font = 'bold 26px sans-serif';
+        ctx.fillText('📬 All mail delivered!', canvas.width / 2, canvas.height / 2 - 45);
+
+        ctx.fillStyle = '#2b9348';
+        ctx.font = 'bold 20px sans-serif';
+        ctx.fillText('You win! Great job, Courier!', canvas.width / 2, canvas.height / 2 - 10);
+
+        ctx.fillStyle = '#6c757d';
+        ctx.font = '15px sans-serif';
+        ctx.fillText('Press [R] to Restart', canvas.width / 2, canvas.height / 2 + 38);
+      }
+    }
+
+    // Main Game Loop
+    function gameLoop() {
+      update();
+
+      // Clear Screen
+      ctx.fillStyle = '#79b05b';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      // Render layers
+      drawPaths();
+      drawScenery();
+      drawHouses();
+      drawDog();
+      drawPlayer();
+      drawPopups();
+      drawHUD();
+
+      requestAnimationFrame(gameLoop);
+    }
+
+    // Start game
+    requestAnimationFrame(gameLoop);
+  </script>
+</body>
+</html>
