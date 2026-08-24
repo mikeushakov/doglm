@@ -1,0 +1,782 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mail Courier</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    overflow: hidden;
+    background: #17251d;
+  }
+  body {
+    display: grid;
+    place-items: center;
+  }
+  canvas {
+    width: 800px;
+    height: 600px;
+    max-width: 100vw;
+    max-height: 100vh;
+    object-fit: contain;
+    display: block;
+    background: #8fc76a;
+    border: 3px solid #0d1711;
+    box-shadow: 0 18px 60px rgba(0,0,0,.45);
+  }
+</style>
+</head>
+<body>
+<canvas id="game" width="800" height="600" aria-label="Mail Courier game"></canvas>
+
+<script>
+"use strict";
+
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+const W = canvas.width;
+const H = canvas.height;
+
+const keys = Object.create(null);
+const TOTAL_LETTERS = 5;
+
+const houseTemplates = [
+  { x: 72,  y: 92,  w: 142, h: 96, color: "#e7a06c", roof: "#914a3d" },
+  { x: 328, y: 62,  w: 148, h: 102, color: "#f2d17b", roof: "#9b653d" },
+  { x: 590, y: 102, w: 138, h: 98, color: "#b3d8e7", roof: "#526f83" },
+  { x: 118, y: 354, w: 150, h: 108, color: "#d7b5df", roof: "#795a86" },
+  { x: 552, y: 356, w: 156, h: 110, color: "#e9c281", roof: "#865338" }
+];
+
+const puddles = [
+  { x: 310, y: 302, rx: 54, ry: 22 },
+  { x: 516, y: 262, rx: 46, ry: 19 },
+  { x: 372, y: 486, rx: 39, ry: 16 }
+];
+
+const trees = [
+  {x:42,y:270,s:1.0}, {x:270,y:218,s:.85}, {x:760,y:290,s:.9},
+  {x:64,y:510,s:.95}, {x:745,y:520,s:1.05}, {x:510,y:92,s:.7},
+  {x:290,y:550,s:.7}, {x:485,y:405,s:.7}
+];
+
+const flowers = [
+  [232,72,"#fff1a8"], [250,91,"#f58da8"], [520,180,"#fff"],
+  [744,225,"#ffd85b"], [95,325,"#fff"], [302,408,"#ff91b5"],
+  [470,535,"#ffe063"], [730,340,"#f7a0c1"], [27,420,"#fff"]
+];
+
+let houses;
+let player;
+let dog;
+let letters;
+let won;
+let gameTime;
+let notice;
+let popups;
+let treat;
+let treatCooldown;
+
+function resetGame() {
+  houses = houseTemplates.map((h, i) => ({ ...h, delivered: false, id: i + 1 }));
+  player = {
+    x: 400, y: 535, r: 13,
+    facingX: 0, facingY: -1,
+    stamina: 100
+  };
+  dog = {
+    x: 442, y: 550,
+    carrying: false,
+    tailPhase: 0
+  };
+  letters = TOTAL_LETTERS;
+  won = false;
+  gameTime = 0;
+  notice = { text: "", time: 0 };
+  popups = [];
+  treat = null;
+  treatCooldown = 0;
+}
+resetGame();
+
+addEventListener("keydown", e => {
+  const k = e.key.toLowerCase();
+  keys[k] = true;
+
+  if (["arrowup","arrowdown","arrowleft","arrowright"," ","shift"].includes(k)) {
+    e.preventDefault();
+  }
+
+  if (!e.repeat && k === "e" && !won) attemptDelivery();
+  if (!e.repeat && k === " " && !won) throwTreat();
+  if (!e.repeat && k === "r" && won) resetGame();
+});
+
+addEventListener("keyup", e => {
+  keys[e.key.toLowerCase()] = false;
+});
+
+addEventListener("blur", () => {
+  for (const k in keys) keys[k] = false;
+});
+
+function clamp(v, min, max) {
+  return Math.max(min, Math.min(max, v));
+}
+
+function distanceToRect(px, py, r) {
+  const cx = clamp(px, r.x, r.x + r.w);
+  const cy = clamp(py, r.y, r.y + r.h);
+  return Math.hypot(px - cx, py - cy);
+}
+
+function circleHitsRect(x, y, radius, rect) {
+  const cx = clamp(x, rect.x, rect.x + rect.w);
+  const cy = clamp(y, rect.y, rect.y + rect.h);
+  const dx = x - cx;
+  const dy = y - cy;
+  return dx * dx + dy * dy < radius * radius;
+}
+
+function playerCanStand(x, y) {
+  if (x - player.r < 7 || x + player.r > W - 7 ||
+      y - player.r < 7 || y + player.r > H - 7) return false;
+
+  for (const h of houses) {
+    if (circleHitsRect(x, y, player.r + 2, h)) return false;
+  }
+  return true;
+}
+
+function inPuddle(x, y) {
+  return puddles.some(p => {
+    const dx = (x - p.x) / p.rx;
+    const dy = (y - p.y) / p.ry;
+    return dx * dx + dy * dy <= 1;
+  });
+}
+
+function nearestUndeliveredHouse() {
+  let best = null;
+  let bestDistance = Infinity;
+  for (const h of houses) {
+    if (h.delivered) continue;
+    const d = distanceToRect(player.x, player.y, h);
+    if (d < bestDistance) {
+      bestDistance = d;
+      best = h;
+    }
+  }
+  return { house: best, distance: bestDistance };
+}
+
+function attemptDelivery() {
+  let target = null;
+  let best = Infinity;
+
+  for (const h of houses) {
+    if (h.delivered) continue;
+    const d = distanceToRect(player.x, player.y, h);
+    if (d < best) {
+      best = d;
+      target = h;
+    }
+  }
+
+  if (target && best <= 48) {
+    target.delivered = true;
+    letters--;
+    popups.push({
+      x: target.x + target.w / 2,
+      y: target.y - 17,
+      text: "Delivered!",
+      age: 0,
+      life: 1.25
+    });
+
+    if (letters === 0) {
+      won = true;
+      notice.time = 0;
+    } else {
+      notice = {
+        text: `${letters} letter${letters === 1 ? "" : "s"} left`,
+        time: 1.5
+      };
+    }
+  } else {
+    notice = { text: "Move closer to a marked house", time: 1.4 };
+  }
+}
+
+function throwTreat() {
+  if (treat || dog.carrying || treatCooldown > 0) return;
+
+  treat = {
+    x: clamp(player.x + player.facingX * 92, 18, W - 18),
+    y: clamp(player.y + player.facingY * 92, 18, H - 18),
+    pulse: 0
+  };
+  treatCooldown = 1;
+  popups.push({
+    x: player.x,
+    y: player.y - 26,
+    text: "Fetch!",
+    age: 0,
+    life: .8
+  });
+}
+
+function update(dt) {
+  if (won) return;
+
+  gameTime += dt;
+  notice.time = Math.max(0, notice.time - dt);
+  treatCooldown = Math.max(0, treatCooldown - dt);
+
+  let dx = 0;
+  let dy = 0;
+  if (keys["a"] || keys["arrowleft"]) dx--;
+  if (keys["d"] || keys["arrowright"]) dx++;
+  if (keys["w"] || keys["arrowup"]) dy--;
+  if (keys["s"] || keys["arrowdown"]) dy++;
+
+  if (dx || dy) {
+    const length = Math.hypot(dx, dy);
+    dx /= length;
+    dy /= length;
+    player.facingX = dx;
+    player.facingY = dy;
+
+    const sprinting = keys["shift"] && player.stamina > 0;
+    let speed = sprinting ? 220 : 145;
+
+    if (inPuddle(player.x, player.y)) speed *= .62;
+
+    if (sprinting) {
+      player.stamina = Math.max(0, player.stamina - 31 * dt);
+    } else {
+      player.stamina = Math.min(100, player.stamina + 19 * dt);
+    }
+
+    const nx = player.x + dx * speed * dt;
+    const ny = player.y + dy * speed * dt;
+
+    if (playerCanStand(nx, player.y)) player.x = nx;
+    if (playerCanStand(player.x, ny)) player.y = ny;
+  } else {
+    player.stamina = Math.min(100, player.stamina + 24 * dt);
+  }
+
+  updateDog(dt);
+
+  for (const p of popups) p.age += dt;
+  popups = popups.filter(p => p.age < p.life);
+}
+
+function updateDog(dt) {
+  dog.tailPhase += dt * 10;
+
+  let targetX;
+  let targetY;
+  let speed;
+
+  if (treat) {
+    treat.pulse += dt * 7;
+    targetX = treat.x;
+    targetY = treat.y;
+    speed = 225;
+  } else if (dog.carrying) {
+    targetX = player.x;
+    targetY = player.y;
+    speed = 205;
+  } else {
+    targetX = player.x - player.facingX * 43;
+    targetY = player.y - player.facingY * 43;
+    speed = 125;
+  }
+
+  const dx = targetX - dog.x;
+  const dy = targetY - dog.y;
+  const dist = Math.hypot(dx, dy);
+
+  if (dist > 4) {
+    const step = Math.min(dist, speed * dt);
+    dog.x += dx / dist * step;
+    dog.y += dy / dist * step;
+  }
+
+  dog.x = clamp(dog.x, 13, W - 13);
+  dog.y = clamp(dog.y, 13, H - 13);
+
+  if (treat && Math.hypot(dog.x - treat.x, dog.y - treat.y) < 10) {
+    treat = null;
+    dog.carrying = true;
+  }
+
+  if (dog.carrying && Math.hypot(dog.x - player.x, dog.y - player.y) < 25) {
+    dog.carrying = false;
+    treatCooldown = 1.2;
+    popups.push({
+      x: dog.x,
+      y: dog.y - 20,
+      text: "Good dog! ♥",
+      age: 0,
+      life: 1.15
+    });
+  }
+}
+
+function roundedRect(x, y, w, h, r, fill, stroke) {
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, r);
+  if (fill) {
+    ctx.fillStyle = fill;
+    ctx.fill();
+  }
+  if (stroke) {
+    ctx.strokeStyle = stroke;
+    ctx.stroke();
+  }
+}
+
+function drawGround() {
+  ctx.fillStyle = "#8fc76a";
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.globalAlpha = .14;
+  ctx.fillStyle = "#4e8b45";
+  for (let y = 18; y < H; y += 34) {
+    for (let x = (y % 68 ? 15 : 32); x < W; x += 47) {
+      ctx.fillRect(x, y, 2, 7);
+      ctx.fillRect(x + 4, y + 2, 2, 5);
+    }
+  }
+  ctx.globalAlpha = 1;
+
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+
+  ctx.strokeStyle = "#d8bd86";
+  ctx.lineWidth = 66;
+  ctx.beginPath();
+  ctx.moveTo(400, 600);
+  ctx.lineTo(400, 235);
+  ctx.lineTo(150, 235);
+  ctx.moveTo(400, 235);
+  ctx.lineTo(660, 235);
+  ctx.stroke();
+
+  ctx.strokeStyle = "#ead19d";
+  ctx.lineWidth = 51;
+  ctx.stroke();
+
+  ctx.strokeStyle = "rgba(137,102,57,.18)";
+  ctx.lineWidth = 2;
+  ctx.setLineDash([7, 10]);
+  ctx.beginPath();
+  ctx.moveTo(400, 600);
+  ctx.lineTo(400, 235);
+  ctx.lineTo(150, 235);
+  ctx.moveTo(400, 235);
+  ctx.lineTo(660, 235);
+  ctx.stroke();
+  ctx.setLineDash([]);
+}
+
+function drawPuddles() {
+  for (const p of puddles) {
+    ctx.fillStyle = "rgba(65,139,172,.62)";
+    ctx.beginPath();
+    ctx.ellipse(p.x, p.y, p.rx, p.ry, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.strokeStyle = "rgba(206,239,244,.55)";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.ellipse(p.x - 7, p.y - 2, p.rx * .45, p.ry * .35, 0, 0, Math.PI * 1.55);
+    ctx.stroke();
+  }
+}
+
+function drawTreesAndFlowers() {
+  for (const t of trees) {
+    ctx.fillStyle = "rgba(38,62,36,.22)";
+    ctx.beginPath();
+    ctx.ellipse(t.x + 7, t.y + 9, 25 * t.s, 13 * t.s, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = "#765238";
+    ctx.fillRect(t.x - 4 * t.s, t.y, 8 * t.s, 22 * t.s);
+
+    ctx.fillStyle = "#397747";
+    ctx.beginPath();
+    ctx.arc(t.x, t.y - 8 * t.s, 21 * t.s, 0, Math.PI * 2);
+    ctx.arc(t.x - 13 * t.s, t.y, 15 * t.s, 0, Math.PI * 2);
+    ctx.arc(t.x + 13 * t.s, t.y, 15 * t.s, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = "#55a45a";
+    ctx.beginPath();
+    ctx.arc(t.x - 6 * t.s, t.y - 13 * t.s, 10 * t.s, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  for (const [x, y, c] of flowers) {
+    ctx.strokeStyle = "#36783f";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(x, y + 7);
+    ctx.lineTo(x, y);
+    ctx.stroke();
+
+    ctx.fillStyle = c;
+    for (let i = 0; i < 4; i++) {
+      const a = i * Math.PI / 2;
+      ctx.beginPath();
+      ctx.arc(x + Math.cos(a) * 3, y + Math.sin(a) * 3, 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.fillStyle = "#e8a62f";
+    ctx.beginPath();
+    ctx.arc(x, y, 2, 0, Math.PI * 2);
+    ctx.fill();
+  }
+}
+
+function drawHouse(h) {
+  ctx.fillStyle = "rgba(35,48,35,.25)";
+  roundedRect(h.x + 7, h.y + 8, h.w, h.h, 8, ctx.fillStyle);
+
+  roundedRect(h.x, h.y, h.w, h.h, 7, h.color);
+
+  ctx.fillStyle = h.roof;
+  ctx.beginPath();
+  ctx.moveTo(h.x - 7, h.y + 22);
+  ctx.lineTo(h.x + h.w / 2, h.y - 10);
+  ctx.lineTo(h.x + h.w + 7, h.y + 22);
+  ctx.lineTo(h.x + h.w - 2, h.y + 35);
+  ctx.lineTo(h.x + 2, h.y + 35);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.fillStyle = "rgba(255,255,255,.22)";
+  ctx.fillRect(h.x + 13, h.y + 42, h.w - 26, 4);
+
+  const windowY = h.y + 56;
+  for (const wx of [h.x + 25, h.x + h.w - 47]) {
+    ctx.fillStyle = "#d8f1ef";
+    ctx.fillRect(wx, windowY, 22, 20);
+    ctx.strokeStyle = "#6f5944";
+    ctx.lineWidth = 3;
+    ctx.strokeRect(wx, windowY, 22, 20);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(wx + 11, windowY);
+    ctx.lineTo(wx + 11, windowY + 20);
+    ctx.moveTo(wx, windowY + 10);
+    ctx.lineTo(wx + 22, windowY + 10);
+    ctx.stroke();
+  }
+
+  const doorW = 26;
+  const doorX = h.x + h.w / 2 - doorW / 2;
+  const doorY = h.y + h.h - 34;
+  ctx.fillStyle = "#76503a";
+  ctx.fillRect(doorX, doorY, doorW, 34);
+  ctx.fillStyle = "#e5be55";
+  ctx.beginPath();
+  ctx.arc(doorX + 20, doorY + 18, 2, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "rgba(0,0,0,.45)";
+  ctx.font = "bold 11px sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText(`#${h.id}`, h.x + h.w / 2, h.y + h.h + 14);
+
+  if (!h.delivered) drawEnvelopeMarker(h);
+  else {
+    ctx.fillStyle = "#4b9257";
+    ctx.beginPath();
+    ctx.arc(h.x + h.w - 12, h.y + 12, 10, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = "#fff";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(h.x + h.w - 17, h.y + 12);
+    ctx.lineTo(h.x + h.w - 13, h.y + 16);
+    ctx.lineTo(h.x + h.w - 7, h.y + 8);
+    ctx.stroke();
+  }
+}
+
+function drawEnvelopeMarker(h) {
+  const pulse = Math.sin(gameTime * 4 + h.id) * 2;
+  const x = h.x + h.w / 2;
+  const y = h.y - 22 + pulse;
+
+  ctx.fillStyle = "rgba(255,224,87,.22)";
+  ctx.beginPath();
+  ctx.arc(x, y, 22 + pulse, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "#fff8dc";
+  ctx.strokeStyle = "#6c5332";
+  ctx.lineWidth = 2;
+  roundedRect(x - 13, y - 9, 26, 18, 3, ctx.fillStyle, ctx.strokeStyle);
+
+  ctx.beginPath();
+  ctx.moveTo(x - 12, y - 7);
+  ctx.lineTo(x, y + 2);
+  ctx.lineTo(x + 12, y - 7);
+  ctx.stroke();
+}
+
+function drawTreat() {
+  if (!treat) return;
+  const s = 1 + Math.sin(treat.pulse) * .08;
+
+  ctx.fillStyle = "rgba(255,255,255,.24)";
+  ctx.beginPath();
+  ctx.arc(treat.x, treat.y, 14 + Math.sin(treat.pulse) * 2, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.save();
+  ctx.translate(treat.x, treat.y);
+  ctx.scale(s, s);
+  ctx.rotate(-.25);
+  ctx.fillStyle = "#d58b42";
+  ctx.beginPath();
+  ctx.arc(-7, 0, 5, 0, Math.PI * 2);
+  ctx.arc(7, 0, 5, 0, Math.PI * 2);
+  ctx.fillRect(-7, -5, 14, 10);
+  ctx.restore();
+}
+
+function drawDog() {
+  ctx.save();
+  ctx.translate(dog.x, dog.y);
+
+  ctx.strokeStyle = "#7b4d29";
+  ctx.lineWidth = 5;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(8, 4);
+  ctx.lineTo(15 + Math.sin(dog.tailPhase) * 4, -1);
+  ctx.stroke();
+
+  ctx.fillStyle = "#a66a38";
+  ctx.beginPath();
+  ctx.ellipse(0, 3, 12, 9, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.arc(-7, -5, 8, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "#744322";
+  ctx.beginPath();
+  ctx.ellipse(-12, -9, 4, 7, -.5, 0, Math.PI * 2);
+  ctx.ellipse(-3, -10, 4, 7, .5, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "#24211e";
+  ctx.beginPath();
+  ctx.arc(-10, -5, 1.8, 0, Math.PI * 2);
+  ctx.fill();
+
+  if (dog.carrying) {
+    ctx.fillStyle = "#d58b42";
+    ctx.fillRect(-14, -2, 11, 4);
+    ctx.beginPath();
+    ctx.arc(-14, 0, 3, 0, Math.PI * 2);
+    ctx.arc(-3, 0, 3, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  ctx.restore();
+}
+
+function drawPlayer() {
+  ctx.save();
+  ctx.translate(player.x, player.y);
+
+  ctx.fillStyle = "rgba(25,38,30,.25)";
+  ctx.beginPath();
+  ctx.ellipse(2, 11, 13, 6, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = "#273547";
+  ctx.lineWidth = 5;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(-5, 8);
+  ctx.lineTo(-7, 15);
+  ctx.moveTo(5, 8);
+  ctx.lineTo(7, 15);
+  ctx.stroke();
+
+  ctx.fillStyle = "#255b91";
+  roundedRect(-10, -8, 20, 22, 5, ctx.fillStyle);
+
+  ctx.fillStyle = "#f3c39e";
+  ctx.beginPath();
+  ctx.arc(0, -15, 8, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = "#315278";
+  ctx.beginPath();
+  ctx.arc(0, -17, 9, Math.PI, Math.PI * 2);
+  ctx.fill();
+  ctx.fillRect(-10, -18, 20, 3);
+
+  ctx.fillStyle = "#b87939";
+  roundedRect(7, -4, 9, 15, 2, ctx.fillStyle);
+  ctx.strokeStyle = "#70451f";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(8, -3);
+  ctx.lineTo(14, 6);
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+function drawInteractionPrompt() {
+  const near = nearestUndeliveredHouse();
+  if (!near.house || near.distance > 65) return;
+
+  const h = near.house;
+  const x = clamp(h.x + h.w / 2, 65, W - 65);
+  const y = h.y + h.h + 31;
+
+  roundedRect(x - 58, y - 15, 116, 28, 14, "rgba(20,29,22,.84)");
+  ctx.fillStyle = "#fff";
+  ctx.font = "bold 14px sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText("Press E to deliver", x, y + 4);
+}
+
+function drawPopups() {
+  for (const p of popups) {
+    const t = p.age / p.life;
+    ctx.globalAlpha = Math.min(1, (1 - t) * 2.5);
+    ctx.fillStyle = "#fff";
+    ctx.strokeStyle = "rgba(30,45,30,.8)";
+    ctx.lineWidth = 4;
+    ctx.font = "bold 18px sans-serif";
+    ctx.textAlign = "center";
+    ctx.strokeText(p.text, p.x, p.y - t * 24);
+    ctx.fillText(p.text, p.x, p.y - t * 24);
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawHUD() {
+  roundedRect(14, 14, 210, 74, 12, "rgba(20,31,23,.84)");
+  ctx.fillStyle = "#fff";
+  ctx.textAlign = "left";
+  ctx.font = "bold 21px sans-serif";
+  ctx.fillText(`Letters: ${letters} / ${TOTAL_LETTERS}`, 28, 42);
+
+  ctx.font = "12px sans-serif";
+  ctx.fillStyle = "#d9ebdd";
+  ctx.fillText("Sprint", 28, 68);
+
+  roundedRect(78, 58, 128, 12, 6, "rgba(255,255,255,.18)");
+  const staminaWidth = 124 * player.stamina / 100;
+  if (staminaWidth > 0) {
+    roundedRect(80, 60, staminaWidth, 8, 4,
+      player.stamina > 25 ? "#f1d263" : "#ed806b");
+  }
+
+  roundedRect(240, 14, 546, 36, 10, "rgba(20,31,23,.76)");
+  ctx.fillStyle = "#fff";
+  ctx.font = "14px sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText("Deliver all letters • Move: WASD / Arrows • Deliver: E", 513, 37);
+
+  roundedRect(240, 55, 546, 29, 10, "rgba(20,31,23,.62)");
+  ctx.fillStyle = "#dceade";
+  ctx.font = "12px sans-serif";
+  ctx.fillText("Hold Shift to sprint • Puddles slow you • Space tosses a dog treat", 513, 74);
+
+  if (notice.time > 0) {
+    ctx.font = "bold 16px sans-serif";
+    const width = ctx.measureText(notice.text).width + 34;
+    roundedRect(W / 2 - width / 2, H - 51, width, 34, 17, "rgba(20,31,23,.86)");
+    ctx.fillStyle = "#fff";
+    ctx.textAlign = "center";
+    ctx.fillText(notice.text, W / 2, H - 29);
+  }
+}
+
+function drawVictory() {
+  ctx.fillStyle = "rgba(10,18,13,.72)";
+  ctx.fillRect(0, 0, W, H);
+
+  roundedRect(145, 175, 510, 250, 24, "#f8f1d7");
+  ctx.strokeStyle = "#765b39";
+  ctx.lineWidth = 6;
+  ctx.stroke();
+
+  ctx.fillStyle = "#4b9257";
+  ctx.beginPath();
+  ctx.arc(400, 235, 39, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.strokeStyle = "#fff";
+  ctx.lineWidth = 8;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(380, 236);
+  ctx.lineTo(395, 251);
+  ctx.lineTo(423, 219);
+  ctx.stroke();
+
+  ctx.fillStyle = "#26382c";
+  ctx.textAlign = "center";
+  ctx.font = "bold 34px sans-serif";
+  ctx.fillText("All mail delivered!", 400, 315);
+
+  ctx.fillStyle = "#4b6853";
+  ctx.font = "bold 23px sans-serif";
+  ctx.fillText("You win!", 400, 354);
+
+  ctx.fillStyle = "#6b5942";
+  ctx.font = "17px sans-serif";
+  ctx.fillText("Press R to restart", 400, 395);
+}
+
+function draw() {
+  drawGround();
+  drawPuddles();
+  drawTreesAndFlowers();
+
+  for (const h of houses) drawHouse(h);
+
+  drawTreat();
+  drawDog();
+  drawPlayer();
+  drawInteractionPrompt();
+  drawPopups();
+  drawHUD();
+
+  if (won) drawVictory();
+}
+
+let lastTime = performance.now();
+function frame(now) {
+  const dt = Math.min((now - lastTime) / 1000, 0.033);
+  lastTime = now;
+  update(dt);
+  draw();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

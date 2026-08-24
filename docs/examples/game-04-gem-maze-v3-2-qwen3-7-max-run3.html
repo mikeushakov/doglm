@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Gem Maze</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #111;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: system-ui, sans-serif;
+    color: #eee;
+    overflow: hidden;
+  }
+  canvas {
+    background: #2a2230;
+    border: 2px solid #555;
+    box-shadow: 0 0 20px rgba(0,0,0,0.7);
+  }
+</style>
+</head>
+<body>
+<canvas id="game" width="800" height="600"></canvas>
+<script>
+(() => {
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const TILE = 40;
+  const COLS = 20, ROWS = 15;
+
+  const maze = [
+    "11111111111111111111",
+    "10000000001000000001",
+    "10111111010111111101",
+    "10100001010000000101",
+    "10101101010111110101",
+    "10001001010100000101",
+    "11111011010101111101",
+    "10000000010101000001",
+    "10111111110101011111",
+    "10100000000101000001",
+    "10101111111101111101",
+    "10100000000000000101",
+    "10111111111111110101",
+    "10000000000000000001",
+    "11111111110111111111",
+  ];
+
+  const GATE = { x: 10, y: 14 };
+
+  const GEM_SPOTS = [
+    { x: 5, y: 1 },
+    { x: 15, y: 1 },
+    { x: 9, y: 7 },
+    { x: 15, y: 11 },
+    { x: 3, y: 11 },
+  ];
+
+  function tileAt(tx, ty) {
+    if (tx < 0 || ty < 0 || tx >= COLS || ty >= ROWS) return '1';
+    return maze[ty][tx];
+  }
+
+  function isWall(tx, ty) {
+    return tileAt(tx, ty) === '1';
+  }
+
+  // ---------- State ----------
+  let player, gems, gateOpen, won, footprints, particles, hearts;
+  let dog;
+  let keys = {};
+  let lastTime = 0;
+  let instructionsAlpha = 1;
+
+  function reset() {
+    player = {
+      x: 1 * TILE + TILE / 2,
+      y: 13 * TILE + TILE / 2,
+      r: 12,
+      speed: 160,
+      facing: 0, // 0=down,1=left,2=up,3=right
+      bob: 0,
+    };
+    gems = GEM_SPOTS.map((g, i) => ({
+      tx: g.x, ty: g.y,
+      x: g.x * TILE + TILE / 2,
+      y: g.y * TILE + TILE / 2,
+      collected: false,
+      phase: i * 1.3,
+      wiggle: 0,
+    }));
+    gateOpen = false;
+    won = false;
+    footprints = [];
+    particles = [];
+    hearts = [];
+    instructionsAlpha = 1;
+
+    dog = {
+      x: 9 * TILE + TILE / 2,
+      y: 9 * TILE + TILE / 2,
+      r: 12,
+      speed: 55,
+      dir: { x: 1, y: 0 },
+      changeTimer: 0,
+      tail: 0,
+      stepTimer: 0,
+    };
+  }
+  reset();
+
+  // ---------- Input ----------
+  window.addEventListener('keydown', e => {
+    keys[e.key.toLowerCase()] = true;
+    if ((e.key === 'r' || e.key === 'R') && won) reset();
+    if ((e.key === 'e' || e.key === 'E') && !won) tryPetDog();
+    if (['ArrowUp','ArrowDown','ArrowLeft','ArrowRight',' '].includes(e.key)) e.preventDefault();
+  });
+  window.addEventListener('keyup', e => { keys[e.key.toLowerCase()] = false; });
+
+  function tryPetDog() {
+    const dx = dog.x - player.x;
+    const dy = dog.y - player.y;
+    if (Math.hypot(dx, dy) < 36) {
+      for (let i = 0; i < 6; i++) {
+        hearts.push({
+          x: dog.x + (Math.random()-0.5)*10,
+          y: dog.y - 10,
+          vx: (Math.random()-0.5)*30,
+          vy: -40 - Math.random()*20,
+          life: 1.2,
+        });
+      }
+    }
+  }
+
+  // ---------- Collision ----------
+  function canMoveTo(x, y, r) {
+    // check four corners + mid-edges of bounding circle approx
+    const checks = [
+      [x - r, y - r], [x + r, y - r],
+      [x - r, y + r], [x + r, y + r],
+      [x, y - r], [x, y + r], [x - r, y], [x + r, y],
+    ];
+    for (const [cx, cy] of checks) {
+      const tx = Math.floor(cx / TILE);
+      const ty = Math.floor(cy / TILE);
+      if (isWall(tx, ty)) return false;
+    }
+    return true;
+  }
+
+  function moveEntity(ent, dx, dy) {
+    // X axis
+    if (dx !== 0) {
+      const nx = ent.x + dx;
+      if (canMoveTo(nx, ent.y, ent.r)) ent.x = nx;
+    }
+    // Y axis
+    if (dy !== 0) {
+      const ny = ent.y + dy;
+      if (canMoveTo(ent.x, ny, ent.r)) ent.y = ny;
+    }
+  }
+
+  // ---------- Dog AI ----------
+  function pickDogDir() {
+    const options = [
+      { x: 1, y: 0 }, { x: -1, y: 0 },
+      { x: 0, y: 1 }, { x: 0, y: -1 },
+    ];
+    // Prefer directions that aren't walls
+    const good = options.filter(d => {
+      const tx = Math.floor((dog.x + d.x * (dog.r + 2)) / TILE);
+      const ty = Math.floor((dog.y + d.y * (dog.r + 2)) / TILE);
+      return !isWall(tx, ty);
+    });
+    const pool = good.length ? good : options;
+    dog.dir = pool[Math.floor(Math.random() * pool.length)];
+  }
+
+  function updateDog(dt) {
+    dog.changeTimer -= dt;
+    dog.tail += dt * 8;
+    dog.stepTimer += dt;
+
+    const nx = dog.x + dog.dir.x * dog.speed * dt;
+    const ny = dog.y + dog.dir.y * dog.speed * dt;
+    const couldX = canMoveTo(nx, dog.y, dog.r);
+    const couldY = canMoveTo(dog.x, ny, dog.r);
+
+    if (dog.dir.x !== 0 && couldX) dog.x = nx;
+    else if (dog.dir.y !== 0 && couldY) dog.y = ny;
+    else {
+      pickDogDir();
+      dog.changeTimer = 0.6 + Math.random() * 0.8;
+      return;
+    }
+
+    // leave footprint occasionally
+    if (dog.stepTimer > 0.35) {
+      dog.stepTimer = 0;
+      footprints.push({ x: dog.x, y: dog.y + 6, life: 4, kind: 'paw' });
+    }
+
+    if (dog.changeTimer <= 0) {
+      dog.changeTimer = 1 + Math.random() * 1.5;
+      // sometimes keep going, sometimes turn
+      if (Math.random() < 0.5) pickDogDir();
+    }
+  }
+
+  // ---------- Update ----------
+  function update(dt) {
+    if (won) return;
+
+    // Player input
+    let vx = 0, vy = 0;
+    if (keys['arrowleft'] || keys['a']) vx -= 1;
+    if (keys['arrowright'] || keys['d']) vx += 1;
+    if (keys['arrowup'] || keys['w']) vy -= 1;
+    if (keys['arrowdown'] || keys['s']) vy += 1;
+
+    if (vx !== 0 || vy !== 0) {
+      const len = Math.hypot(vx, vy);
+      vx /= len; vy /= len;
+      if (Math.abs(vx) > Math.abs(vy)) player.facing = vx > 0 ? 3 : 1;
+      else player.facing = vy > 0 ? 0 : 2;
+      player.bob += dt * 10;
+
+      // footprints
+      if (!player._fpT) player._fpT = 0;
+      player._fpT += dt;
+      if (player._fpT > 0.22) {
+        player._fpT = 0;
+        footprints.push({ x: player.x, y: player.y + 8, life: 5, kind: 'boot' });
+      }
+    }
+
+    moveEntity(player, vx * player.speed * dt, vy * player.speed * dt);
+
+    // Gem magnet + collection
+    for (const g of gems) {
+      if (g.collected) continue;
+      const dx = player.x - g.x;
+      const dy = player.y - g.y;
+      const d = Math.hypot(dx, dy);
+      if (d < 60) {
+        // magnet pull
+        const pull = (60 - d) / 60 * 40 * dt;
+        g.x += (dx / d) * pull;
+        g.y += (dy / d) * pull;
+        g.wiggle = Math.min(1, g.wiggle + dt * 4);
+      } else {
+        // return to home slowly
+        const hx = g.tx * TILE + TILE / 2;
+        const hy = g.ty * TILE + TILE / 2;
+        g.x += (hx - g.x) * dt * 2;
+        g.y += (hy - g.y) * dt * 2;
+        g.wiggle = Math.max(0, g.wiggle - dt * 3);
+      }
+      g.phase += dt * 3;
+
+      if (d < player.r + 10) {
+        g.collected = true;
+        for (let i = 0; i < 14; i++) {
+          const a = Math.random() * Math.PI * 2;
+          const sp = 60 + Math.random() * 80;
+          particles.push({
+            x: g.x, y: g.y,
+            vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+            life: 0.7, max: 0.7,
+            color: ['#ffe066','#ff9ec7','#9ad7ff','#b8ffb0'][i % 4],
+          });
+        }
+        particles.push({ x: g.x, y: g.y - 6, vx: 0, vy: -30, life: 0.9, max: 0.9, text: '+1' });
+
+        if (gems.every(x => x.collected)) gateOpen = true;
+      }
+    }
+
+    // Gate win
+    if (gateOpen) {
+      const gx = GATE.x * TILE + TILE / 2;
+      const gy = GATE.y * TILE + TILE / 2;
+      if (Math.hypot(player.x - gx, player.y - gy) < TILE * 0.6) {
+        won = true;
+      }
+    }
+
+    // Dog
+    updateDog(dt);
+
+    // Particles
+    for (const p of particles) {
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+      p.vy += 60 * dt;
+      p.life -= dt;
+    }
+    particles = particles.filter(p => p.life > 0);
+
+    // Hearts
+    for (const h of hearts) {
+      h.x += h.vx * dt;
+      h.y += h.vy * dt;
+      h.vy += 20 * dt;
+      h.life -= dt;
+    }
+    hearts = hearts.filter(h => h.life > 0);
+
+    // Footprints fade
+    for (const f of footprints) f.life -= dt;
+    footprints = footprints.filter(f => f.life > 0);
+
+    // Instructions fade after a while
+    if (instructionsAlpha > 0) {
+      instructionsAlpha -= dt * 0.08;
+      if (instructionsAlpha < 0) instructionsAlpha = 0;
+    }
+  }
+
+  // ---------- Render ----------
+  function draw() {
+    // Background floor
+    ctx.fillStyle = '#2a2230';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Floor subtle pattern
+    for (let y = 0; y < ROWS; y++) {
+      for (let x = 0; x < COLS; x++) {
+        if (tileAt(x, y) === '0' || (x === GATE.x && y === GATE.y)) {
+          ctx.fillStyle = ((x + y) % 2 === 0) ? '#3a2f42' : '#342a3c';
+          ctx.fillRect(x * TILE, y * TILE, TILE, TILE);
+        }
+      }
+    }
+
+    // Footprints
+    for (const f of footprints) {
+      const a = Math.max(0, Math.min(1, f.life / 5)) * 0.4;
+      ctx.fillStyle = `rgba(20,15,25,${a})`;
+      if (f.kind === 'boot') {
+        ctx.fillRect(f.x - 4, f.y - 3, 8, 6);
+      } else {
+        ctx.beginPath();
+        ctx.arc(f.x - 3, f.y, 2, 0, Math.PI * 2);
+        ctx.arc(f.x + 3, f.y, 2, 0, Math.PI * 2);
+        ctx.arc(f.x, f.y - 3, 1.6, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // Walls
+    for (let y = 0; y < ROWS; y++) {
+      for (let x = 0; x < COLS; x++) {
+        if (tileAt(x, y) === '1') {
+          const px = x * TILE, py = y * TILE;
+          ctx.fillStyle = '#6b5b8a';
+          ctx.fillRect(px, py, TILE, TILE);
+          ctx.fillStyle = '#8977ad';
+          ctx.fillRect(px, py, TILE, 4);
+          ctx.fillStyle = '#4a3f63';
+          ctx.fillRect(px, py + TILE - 4, TILE, 4);
+          ctx.strokeStyle = '#3d3354';
+          ctx.lineWidth = 1;
+          ctx.strokeRect(px + 0.5, py + 0.5, TILE - 1, TILE - 1);
+        }
+      }
+    }
+
+    // Gate
+    drawGate();
+
+    // Gems
+    for (const g of gems) {
+      if (g.collected) continue;
+      drawGem(g);
+    }
+
+    // Dog
+    drawDog();
+
+    // Player
+    drawPlayer();
+
+    // Particles
+    for (const p of particles) {
+      if (p.text) {
+        const a = p.life / p.max;
+        ctx.fillStyle = `rgba(255,240,120,${a})`;
+        ctx.font = 'bold 18px system-ui';
+        ctx.textAlign = 'center';
+        ctx.fillText(p.text, p.x, p.y);
+      } else {
+        const a = p.life / p.max;
+        ctx.fillStyle = p.color;
+        ctx.globalAlpha = a;
+        ctx.fillRect(p.x - 2, p.y - 2, 4, 4);
+        ctx.globalAlpha = 1;
+      }
+    }
+
+    // Hearts
+    for (const h of hearts) {
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, h.life / 1.2);
+      ctx.fillStyle = '#ff5a8a';
+      ctx.font = '16px system-ui';
+      ctx.textAlign = 'center';
+      ctx.fillText('♥', h.x, h.y);
+      ctx.restore();
+    }
+
+    // HUD
+    drawHUD();
+
+    // Victory
+    if (won) drawVictory();
+  }
+
+  function drawGate() {
+    const px = GATE.x * TILE, py = GATE.y * TILE;
+    // Stone frame
+    ctx.fillStyle = '#4a3f63';
+    ctx.fillRect(px, py, TILE, TILE);
+    ctx.fillStyle = '#8977ad';
+    ctx.fillRect(px + 2, py + 2, TILE - 4, TILE - 4);
+
+    if (gateOpen) {
+      // Glowing open portal
+      const grd = ctx.createRadialGradient(px + TILE/2, py + TILE/2, 2, px + TILE/2, py + TILE/2, TILE/2);
+      grd.addColorStop(0, '#fff7b0');
+      grd.addColorStop(0.5, '#ffd24a');
+      grd.addColorStop(1, '#8a5a00');
+      ctx.fillStyle = grd;
+      ctx.fillRect(px + 5, py + 5, TILE - 10, TILE - 10);
+      // Sparkle
+      ctx.fillStyle = '#fff';
+      const t = performance.now() / 200;
+      for (let i = 0; i < 3; i++) {
+        const sx = px + 8 + ((t + i * 7) % (TILE - 16));
+        const sy = py + 10 + Math.sin(t + i) * 4;
+        ctx.fillRect(sx, sy, 2, 2);
+      }
+    } else {
+      // Bars
+      ctx.fillStyle = '#2a2030';
+      ctx.fillRect(px + 5, py + 5, TILE - 10, TILE - 10);
+      ctx.fillStyle = '#c0b0d8';
+      for (let i = 0; i < 4; i++) {
+        ctx.fillRect(px + 8 + i * 7, py + 6, 3, TILE - 12);
+      }
+      // Lock
+      ctx.fillStyle = '#e8c547';
+      ctx.fillRect(px + TILE/2 - 4, py + TILE/2 - 3, 8, 7);
+      ctx.strokeStyle = '#e8c547';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(px + TILE/2, py + TILE/2 - 3, 3, Math.PI, 0);
+      ctx.stroke();
+    }
+  }
+
+  function drawGem(g) {
+    const bob = Math.sin(g.phase) * 3;
+    const wx = Math.sin(performance.now()/80) * g.wiggle * 2;
+    const cx = g.x + wx;
+    const cy = g.y + bob;
+    // Glow
+    const grd = ctx.createRadialGradient(cx, cy, 1, cx, cy, 18);
+    grd.addColorStop(0, 'rgba(255,230,120,0.6)');
+    grd.addColorStop(1, 'rgba(255,230,120,0)');
+    ctx.fillStyle = grd;
+    ctx.fillRect(cx - 20, cy - 20, 40, 40);
+    // Diamond
+    ctx.fillStyle = '#4ad3ff';
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - 10);
+    ctx.lineTo(cx + 8, cy);
+    ctx.lineTo(cx, cy + 10);
+    ctx.lineTo(cx - 8, cy);
+    ctx.closePath();
+    ctx.fill();
+    ctx.fillStyle = '#b8f1ff';
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - 10);
+    ctx.lineTo(cx + 8, cy);
+    ctx.lineTo(cx, cy);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = '#1b6d8a';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(cx, cy - 10);
+    ctx.lineTo(cx + 8, cy);
+    ctx.lineTo(cx, cy + 10);
+    ctx.lineTo(cx - 8, cy);
+    ctx.closePath();
+    ctx.stroke();
+  }
+
+  function drawDog() {
+    const x = dog.x, y = dog.y;
+    const wag = Math.sin(dog.tail) * 4;
+    // Shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.beginPath();
+    ctx.ellipse(x, y + 10, 12, 4, 0, 0, Math.PI*2);
+    ctx.fill();
+    // Tail
+    ctx.strokeStyle = '#b87a3a';
+    ctx.lineWidth = 4;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(x - 8, y + 2);
+    ctx.lineTo(x - 14 + wag, y - 4);
+    ctx.stroke();
+    // Body
+    ctx.fillStyle = '#c98a48';
+    ctx.beginPath();
+    ctx.ellipse(x, y + 2, 12, 8, 0, 0, Math.PI*2);
+    ctx.fill();
+    // Head
+    ctx.fillStyle = '#d89a58';
+    ctx.beginPath();
+    ctx.arc(x + 8, y - 3, 7, 0, Math.PI*2);
+    ctx.fill();
+    // Ears
+    ctx.fillStyle = '#8a5a28';
+    ctx.beginPath();
+    ctx.ellipse(x + 4, y - 8, 3, 5, -0.3, 0, Math.PI*2);
+    ctx.ellipse(x + 12, y - 8, 3, 5, 0.3, 0, Math.PI*2);
+    ctx.fill();
+    // Eyes
+    ctx.fillStyle = '#111';
+    ctx.fillRect(x + 9, y - 4, 2, 2);
+    // Nose
+    ctx.fillStyle = '#222';
+    ctx.fillRect(x + 13, y - 2, 2, 2);
+    // Legs (hint)
+    ctx.fillStyle = '#8a5a28';
+    ctx.fillRect(x - 6, y + 8, 3, 4);
+    ctx.fillRect(x + 4, y + 8, 3, 4);
+  }
+
+  function drawPlayer() {
+    const x = player.x;
+    const y = player.y + Math.sin(player.bob) * 1.5;
+    // Shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.beginPath();
+    ctx.ellipse(player.x, player.y + 13, 10, 4, 0, 0, Math.PI*2);
+    ctx.fill();
+    // Body
+    ctx.fillStyle = '#3aa0ff';
+    ctx.fillRect(x - 8, y - 2, 16, 14);
+    // Head
+    ctx.fillStyle = '#ffd9b0';
+    ctx.beginPath();
+    ctx.arc(x, y - 6, 7, 0, Math.PI*2);
+    ctx.fill();
+    // Eyes based on facing
+    ctx.fillStyle = '#111';
+    if (player.facing === 0) { // down
+      ctx.fillRect(x - 3, y - 6, 2, 2);
+      ctx.fillRect(x + 1, y - 6, 2, 2);
+    } else if (player.facing === 2) { // up
+      // no eyes visible
+    } else if (player.facing === 1) { // left
+      ctx.fillRect(x - 4, y - 6, 2, 2);
+    } else {
+      ctx.fillRect(x + 2, y - 6, 2, 2);
+    }
+    // Hat
+    ctx.fillStyle = '#c0392b';
+    ctx.fillRect(x - 7, y - 12, 14, 4);
+    ctx.fillRect(x - 4, y - 15, 8, 4);
+  }
+
+  function drawHUD() {
+    const collected = gems.filter(g => g.collected).length;
+    // Panel
+    ctx.fillStyle = 'rgba(0,0,0,0.55)';
+    ctx.fillRect(10, 10, 170, 40);
+    ctx.strokeStyle = '#8977ad';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(10, 10, 170, 40);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 18px system-ui';
+    ctx.textAlign = 'left';
+    ctx.fillText(`Gems: ${collected} / 5`, 22, 36);
+
+    // Hint about petting dog
+    const nearDog = Math.hypot(dog.x - player.x, dog.y - player.y) < 36;
+    if (nearDog && !won) {
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillRect(10, 55, 150, 26);
+      ctx.fillStyle = '#ffd0e0';
+      ctx.font = '13px system-ui';
+      ctx.fillText('Press E to pet the dog', 18, 72);
+    }
+
+    // Instruction line
+    if (instructionsAlpha > 0) {
+      ctx.save();
+      ctx.globalAlpha = instructionsAlpha;
+      ctx.fillStyle = 'rgba(0,0,0,0.55)';
+      ctx.fillRect(canvas.width/2 - 240, canvas.height - 40, 480, 30);
+      ctx.fillStyle = '#fff';
+      ctx.font = '14px system-ui';
+      ctx.textAlign = 'center';
+      ctx.fillText('Collect all gems to open the exit. Move: WASD / Arrows.  E: pet dog.', canvas.width/2, canvas.height - 20);
+      ctx.restore();
+    }
+  }
+
+  function drawVictory() {
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#ffd24a';
+    ctx.font = 'bold 42px system-ui';
+    ctx.textAlign = 'center';
+    ctx.fillText('You escaped the maze!', canvas.width/2, canvas.height/2 - 30);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 28px system-ui';
+    ctx.fillText('You win!', canvas.width/2, canvas.height/2 + 10);
+    ctx.font = '18px system-ui';
+    ctx.fillStyle = '#cfc';
+    ctx.fillText('Press R to restart', canvas.width/2, canvas.height/2 + 50);
+  }
+
+  // ---------- Main loop ----------
+  function loop(t) {
+    if (!lastTime) lastTime = t;
+    const dt = Math.min(0.05, (t - lastTime) / 1000);
+    lastTime = t;
+    update(dt);
+    draw();
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
