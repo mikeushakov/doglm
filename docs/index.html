@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DogLM — Can you pet the dog in the AI-generated game?</title>
+<meta name="description" content="DogLM is a benchmark measuring whether an LLM, when prompted to build a video game with a background dog character in it, lets the player pet that dog. Leaderboard of 17 models.">
+<meta name="author" content="Mike Ushakov">
+<link rel="canonical" href="https://mikeushakov.github.io/doglm/">
+<meta name="theme-color" content="#fdfdfe">
+
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="DogLM">
+<meta property="og:url" content="https://mikeushakov.github.io/doglm/">
+<meta property="og:title" content="DogLM — Can you pet the dog in the AI-generated game?">
+<meta property="og:description" content="A benchmark measuring whether an LLM, when prompted to build a video game with a background dog character in it, lets the player pet that dog. Leaderboard of 17 models.">
+<meta property="og:image" content="https://mikeushakov.github.io/doglm/DogLM_OG_Image_V1.png">
+<meta property="og:image:secure_url" content="https://mikeushakov.github.io/doglm/DogLM_OG_Image_V1.png">
+<meta property="og:image:type" content="image/png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="A cartoon postman kneeling on a village path to pet a small brown dog, with hearts above them.">
+<meta property="og:locale" content="en_US">
+
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="DogLM — Can you pet the dog in the AI-generated game?">
+<meta name="twitter:description" content="A benchmark measuring whether an LLM, when prompted to build a video game with a background dog character in it, lets the player pet that dog. Leaderboard of 17 models.">
+<meta name="twitter:image" content="https://mikeushakov.github.io/doglm/DogLM_OG_Image_V1.png">
+<meta name="twitter:image:alt" content="A cartoon postman kneeling on a village path to pet a small brown dog, with hearts above them.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="masthead">
+  <div class="wrap">
+      <p class="wordmark">DogLM</p>
+      <nav class="topnav"><a href="#leaderboard">Leaderboard</a>
+        <a href="#demo">Games demo</a>
+        <a href="#runs">Scores per run</a>
+        <a href="#distribution">Score distribution</a>
+        <a href="#interactions">Interaction types</a>
+        <a href="#examples">Example games</a></nav>
+    </div>
+</header>
+
+<main class="wrap">
+  <h1>Can you pet the dog<br>
+  in the AI-generated game?</h1>
+
+  <div class="lede">
+    <p>DogLM is a benchmark measuring whether an LLM, when prompted to build<br>a video game with a background dog character in it, lets the player pet that dog.</p>
+    <p>The benchmark is inspired by the game-design rule made popular by "Can You Pet the Dog?" Twitter account (<a href="https://x.com/CanYouPetTheDog">X</a>, <a href="https://bsky.app/profile/canyoupetthedog.com">Bluesky</a>): <strong>if a game has a dog, the player should be able to pet it</strong>.<br>DogLM tests whether a model applies this rule and builds a dog-petting mechanism when two conditions are simultaneously met in the game-generating prompt: (1) a dog character is present in the game description and (2) a model receives <em>zero instruction</em> about the player-dog interaction from the game developer.</p>
+    <p>The benchmark, the games' descriptions, and the detailed methodology are <a href="https://github.com/mikeushakov/doglm">available here</a>.<br>
+    The post on why this benchmark was created and what the results may mean is available here [LINK TO BE ADDED].</p>
+  </div>
+
+  <section class="sec" id="leaderboard">
+    <h2>Leaderboard</h2>
+    <p class="sub">Mean Scores per Model after five runs</p>
+    <p class="meta">Last update: August 25, 2026</p>
+
+    <div class="tablewrap">
+      <table data-sortable>
+        <thead>
+          <tr>
+            <th class="num">#</th>
+            <th class="text">Model</th>
+            <th class="num">Mean score (/20)</th>
+            <th class="num">SD</th>
+            <th class="num">Cued (/10)</th>
+            <th class="num">Uncued (/10)</th>
+            <th class="num">Games scored</th>
+            <th class="num">Cost per game (USD)</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td class="num">1</td><td class="text">Gemini 3.7 Flash</td><td class="num">8.2</td><td class="num">0.4</td><td class="num">8.0</td><td class="num">0.2</td><td class="num">50/50</td><td class="num">$0.019**</td></tr>
+          <tr><td class="num">2</td><td class="text">Kimi K3</td><td class="num">5.4</td><td class="num">0.8</td><td class="num">5.4</td><td class="num">0.0</td><td class="num">48/50</td><td class="num">$0.251</td></tr>
+          <tr><td class="num">3</td><td class="text">Claude Opus 5</td><td class="num">5.2</td><td class="num">1.6</td><td class="num">5.2</td><td class="num">0.0</td><td class="num">50/50</td><td class="num">$0.252</td></tr>
+          <tr><td class="num">4</td><td class="text">Claude Fable 5</td><td class="num">4.8</td><td class="num">1.2</td><td class="num">4.8</td><td class="num">0.0</td><td class="num">50/50</td><td class="num">$0.323</td></tr>
+          <tr><td class="num">5</td><td class="text">Grok 4.6</td><td class="num">3.8</td><td class="num">0.7</td><td class="num">3.8</td><td class="num">0.0</td><td class="num">50/50</td><td class="num">$0.060</td></tr>
+          <tr><td class="num">6</td><td class="text">Grok 4.5</td><td class="num">3.4</td><td class="num">1.9</td><td class="num">3.4</td><td class="num">0.0</td><td class="num">48/50</td><td class="num">$0.040</td></tr>
+          <tr><td class="num">7</td><td class="text">GPT-5.3 Codex</td><td class="num">2.8</td><td class="num">0.7</td><td class="num">2.8</td><td class="num">0.0</td><td class="num">50/50</td><td class="num">$0.080</td></tr>
+          <tr><td class="num">8</td><td class="text">Qwen 3.8 Max*</td><td class="num">2.4</td><td class="num">1.5</td><td class="num">2.2</td><td class="num">0.2</td><td class="num">22/50</td><td class="num">$0.183</td></tr>
+          <tr><td class="num">8</td><td class="text">GPT-5.6 Terra</td><td class="num">2.4</td><td class="num">0.5</td><td class="num">2.4</td><td class="num">0.0</td><td class="num">50/50</td><td class="num">$0.060</td></tr>
+          <tr><td class="num">8</td><td class="text">GPT-5.6 Sol</td><td class="num">2.4</td><td class="num">0.5</td><td class="num">2.4</td><td class="num">0.0</td><td class="num">49/50</td><td class="num">$0.089</td></tr>
+          <tr><td class="num">11</td><td class="text">DeepSeek V4 Pro</td><td class="num">2.2</td><td class="num">1.3</td><td class="num">2.2</td><td class="num">0.0</td><td class="num">48/50</td><td class="num">$0.032</td></tr>
+          <tr><td class="num">11</td><td class="text">Gemini 3.1 Pro</td><td class="num">2.2</td><td class="num">1.2</td><td class="num">2.2</td><td class="num">0.0</td><td class="num">50/50</td><td class="num">$0.157</td></tr>
+          <tr><td class="num">13</td><td class="text">Qwen 3.7 Max</td><td class="num">1.8</td><td class="num">1.3</td><td class="num">1.8</td><td class="num">0.0</td><td class="num">49/50</td><td class="num">$0.051</td></tr>
+          <tr><td class="num">14</td><td class="text">Kimi K2.7 Code</td><td class="num">1.0</td><td class="num">0.0</td><td class="num">1.0</td><td class="num">0.0</td><td class="num">49/50</td><td class="num">$0.042</td></tr>
+          <tr><td class="num">15</td><td class="text">Claude Opus 4.8</td><td class="num">0.6</td><td class="num">0.8</td><td class="num">0.6</td><td class="num">0.0</td><td class="num">50/50</td><td class="num">$0.141</td></tr>
+          <tr><td class="num">16</td><td class="text">Mistral Large 2512</td><td class="num">0.2</td><td class="num">0.4</td><td class="num">0.2</td><td class="num">0.0</td><td class="num">50/50</td><td class="num">$0.005</td></tr>
+          <tr><td class="num">17</td><td class="text">GLM 5.2</td><td class="num">0.0</td><td class="num">0.0</td><td class="num">0.0</td><td class="num">0.0</td><td class="num">41/50</td><td class="num">$0.042</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p class="body"><strong>How scoring works:</strong> Each generated game is scored on the player-dog interaction: <strong>2</strong> — you can pet the dog; <strong>1</strong> — the dog is interactive, but you can't pet it; <strong>0</strong> — the dog and the player do not interact at all. FAILED games (the game does not parse, is truncated, or cannot be checked) are excluded from scoring. A model's score per run is the sum of its ten game scores, maximum 20. Full scoring rubric is in the <a href="https://github.com/mikeushakov/doglm">DogLM repository</a>.</p>
+
+    <div class="notes">
+      <p><em>All models and tables on this page: DogLM v1, 5 runs × 10 PRDs per model, generated August 2026, judged by Claude Sonnet 4.6. Models added later will note their own benchmark version, run count, judge, and date here.</em></p>
+      <p><em>* As Qwen 3.8 Max failed 28 out of 50 of the game generations, the final mean score of this model can't be reliably compared with the scores of other models in the list.</em></p>
+      <p><em>** During the test, Gemini 3.7 Flash was provided with a 75% discount on OpenRouter.</em></p>
+    </div>
+  </section>
+
+  <section class="sec" id="demo">
+    <h2>Games Demo</h2>
+    <p class="body">Watch how the generated games look.</p>
+    <div class="video">
+      <iframe src="https://www.youtube-nocookie.com/embed/xZIo-zIMGuU" title="DogLM games demo" loading="lazy" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+    </div>
+  </section>
+
+  <section class="sec" id="runs">
+    <h2>Scores per model per run</h2>
+    <div class="tablewrap">
+      <table data-sortable>
+        <thead>
+          <tr>
+            <th class="text">Model</th>
+            <th class="num">Run 1</th>
+            <th class="num">Run 2</th>
+            <th class="num">Run 3</th>
+            <th class="num">Run 4</th>
+            <th class="num">Run 5</th>
+            <th class="num">Mean</th>
+            <th class="num">Games scored</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td class="text">Gemini 3.7 Flash</td><td class="num">8</td><td class="num">8</td><td class="num">8</td><td class="num">9</td><td class="num">8</td><td class="num">8.2</td><td class="num">50/50</td></tr>
+          <tr><td class="text">Kimi K3</td><td class="num">6</td><td class="num">6</td><td class="num">5</td><td class="num">6</td><td class="num">4</td><td class="num">5.4</td><td class="num">48/50</td></tr>
+          <tr><td class="text">Claude Opus 5</td><td class="num">4</td><td class="num">6</td><td class="num">8</td><td class="num">4</td><td class="num">4</td><td class="num">5.2</td><td class="num">50/50</td></tr>
+          <tr><td class="text">Claude Fable 5</td><td class="num">5</td><td class="num">4</td><td class="num">7</td><td class="num">4</td><td class="num">4</td><td class="num">4.8</td><td class="num">50/50</td></tr>
+          <tr><td class="text">Grok 4.6</td><td class="num">3</td><td class="num">3</td><td class="num">5</td><td class="num">4</td><td class="num">4</td><td class="num">3.8</td><td class="num">50/50</td></tr>
+          <tr><td class="text">Grok 4.5</td><td class="num">2</td><td class="num">3</td><td class="num">2</td><td class="num">7</td><td class="num">3</td><td class="num">3.4</td><td class="num">48/50</td></tr>
+          <tr><td class="text">GPT-5.3 Codex</td><td class="num">2</td><td class="num">4</td><td class="num">2</td><td class="num">3</td><td class="num">3</td><td class="num">2.8</td><td class="num">50/50</td></tr>
+          <tr><td class="text">Qwen 3.8 Max*</td><td class="num">1</td><td class="num">2</td><td class="num">1</td><td class="num">5</td><td class="num">3</td><td class="num">2.4</td><td class="num">22/50</td></tr>
+          <tr><td class="text">GPT-5.6 Terra</td><td class="num">2</td><td class="num">2</td><td class="num">2</td><td class="num">3</td><td class="num">3</td><td class="num">2.4</td><td class="num">50/50</td></tr>
+          <tr><td class="text">GPT-5.6 Sol</td><td class="num">2</td><td class="num">3</td><td class="num">2</td><td class="num">2</td><td class="num">3</td><td class="num">2.4</td><td class="num">49/50</td></tr>
+          <tr><td class="text">DeepSeek V4 Pro</td><td class="num">2</td><td class="num">3</td><td class="num">4</td><td class="num">0</td><td class="num">2</td><td class="num">2.2</td><td class="num">48/50</td></tr>
+          <tr><td class="text">Gemini 3.1 Pro</td><td class="num">2</td><td class="num">1</td><td class="num">3</td><td class="num">1</td><td class="num">4</td><td class="num">2.2</td><td class="num">50/50</td></tr>
+          <tr><td class="text">Qwen 3.7 Max</td><td class="num">2</td><td class="num">2</td><td class="num">4</td><td class="num">1</td><td class="num">0</td><td class="num">1.8</td><td class="num">49/50</td></tr>
+          <tr><td class="text">Kimi K2.7 Code</td><td class="num">1</td><td class="num">1</td><td class="num">1</td><td class="num">1</td><td class="num">1</td><td class="num">1.0</td><td class="num">49/50</td></tr>
+          <tr><td class="text">Claude Opus 4.8</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">1</td><td class="num">2</td><td class="num">0.6</td><td class="num">50/50</td></tr>
+          <tr><td class="text">Mistral Large 2512</td><td class="num">1</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">0.2</td><td class="num">50/50</td></tr>
+          <tr><td class="text">GLM 5.2</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">0.0</td><td class="num">41/50</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="sec" id="distribution">
+    <h2>Score distribution per model</h2>
+    <div class="tablewrap">
+      <table data-sortable>
+        <thead>
+          <tr>
+            <th class="text">Model</th>
+            <th class="num">Score 2</th>
+            <th class="num">Score 1</th>
+            <th class="num">Score 0</th>
+            <th class="num">FAILED</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td class="text">Gemini 3.7 Flash</td><td class="num">15</td><td class="num">11</td><td class="num">24</td><td class="num">0</td></tr>
+          <tr><td class="text">Kimi K3</td><td class="num">9</td><td class="num">9</td><td class="num">30</td><td class="num">2</td></tr>
+          <tr><td class="text">Claude Opus 5</td><td class="num">6</td><td class="num">14</td><td class="num">30</td><td class="num">0</td></tr>
+          <tr><td class="text">Claude Fable 5</td><td class="num">7</td><td class="num">10</td><td class="num">33</td><td class="num">0</td></tr>
+          <tr><td class="text">Grok 4.6</td><td class="num">4</td><td class="num">11</td><td class="num">35</td><td class="num">0</td></tr>
+          <tr><td class="text">Grok 4.5</td><td class="num">3</td><td class="num">11</td><td class="num">34</td><td class="num">2</td></tr>
+          <tr><td class="text">GPT-5.3 Codex</td><td class="num">0</td><td class="num">14</td><td class="num">36</td><td class="num">0</td></tr>
+          <tr><td class="text">Qwen 3.8 Max*</td><td class="num">4</td><td class="num">4</td><td class="num">14</td><td class="num">28</td></tr>
+          <tr><td class="text">GPT-5.6 Terra</td><td class="num">0</td><td class="num">12</td><td class="num">38</td><td class="num">0</td></tr>
+          <tr><td class="text">GPT-5.6 Sol</td><td class="num">0</td><td class="num">12</td><td class="num">37</td><td class="num">1</td></tr>
+          <tr><td class="text">DeepSeek V4 Pro</td><td class="num">4</td><td class="num">3</td><td class="num">41</td><td class="num">2</td></tr>
+          <tr><td class="text">Gemini 3.1 Pro</td><td class="num">2</td><td class="num">7</td><td class="num">41</td><td class="num">0</td></tr>
+          <tr><td class="text">Qwen 3.7 Max</td><td class="num">1</td><td class="num">7</td><td class="num">41</td><td class="num">1</td></tr>
+          <tr><td class="text">Kimi K2.7 Code</td><td class="num">0</td><td class="num">5</td><td class="num">44</td><td class="num">1</td></tr>
+          <tr><td class="text">Claude Opus 4.8</td><td class="num">1</td><td class="num">1</td><td class="num">48</td><td class="num">0</td></tr>
+          <tr><td class="text">Mistral Large 2512</td><td class="num">0</td><td class="num">1</td><td class="num">49</td><td class="num">0</td></tr>
+          <tr><td class="text">GLM 5.2</td><td class="num">0</td><td class="num">0</td><td class="num">41</td><td class="num">9</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="sec" id="interactions">
+    <h2>Interaction Types per Model</h2>
+    <div class="tablewrap">
+      <table data-sortable>
+        <thead>
+          <tr>
+            <th class="text">Model</th>
+            <th class="num">Petting</th>
+            <th class="num">Proximity</th>
+            <th class="num">Animation</th>
+            <th class="num">Command</th>
+            <th class="num">Total interactive</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td class="text">Gemini 3.7 Flash</td><td class="num">15</td><td class="num">10</td><td class="num">1</td><td class="num">0</td><td class="num">26</td></tr>
+          <tr><td class="text">Claude Opus 5</td><td class="num">6</td><td class="num">10</td><td class="num">2</td><td class="num">2</td><td class="num">20</td></tr>
+          <tr><td class="text">Kimi K3</td><td class="num">9</td><td class="num">7</td><td class="num">2</td><td class="num">0</td><td class="num">18</td></tr>
+          <tr><td class="text">Claude Fable 5</td><td class="num">7</td><td class="num">10</td><td class="num">0</td><td class="num">0</td><td class="num">17</td></tr>
+          <tr><td class="text">Grok 4.6</td><td class="num">4</td><td class="num">9</td><td class="num">2</td><td class="num">0</td><td class="num">15</td></tr>
+          <tr><td class="text">Grok 4.5</td><td class="num">3</td><td class="num">8</td><td class="num">1</td><td class="num">2</td><td class="num">14</td></tr>
+          <tr><td class="text">GPT-5.3 Codex</td><td class="num">0</td><td class="num">12</td><td class="num">1</td><td class="num">1</td><td class="num">14</td></tr>
+          <tr><td class="text">GPT-5.6 Sol</td><td class="num">0</td><td class="num">10</td><td class="num">0</td><td class="num">2</td><td class="num">12</td></tr>
+          <tr><td class="text">GPT-5.6 Terra</td><td class="num">0</td><td class="num">11</td><td class="num">1</td><td class="num">0</td><td class="num">12</td></tr>
+          <tr><td class="text">Gemini 3.1 Pro</td><td class="num">2</td><td class="num">6</td><td class="num">1</td><td class="num">0</td><td class="num">9</td></tr>
+          <tr><td class="text">Qwen 3.8 Max*</td><td class="num">4</td><td class="num">4</td><td class="num">0</td><td class="num">0</td><td class="num">8</td></tr>
+          <tr><td class="text">Qwen 3.7 Max</td><td class="num">1</td><td class="num">6</td><td class="num">1</td><td class="num">0</td><td class="num">8</td></tr>
+          <tr><td class="text">DeepSeek V4 Pro</td><td class="num">4</td><td class="num">3</td><td class="num">0</td><td class="num">0</td><td class="num">7</td></tr>
+          <tr><td class="text">Kimi K2.7 Code</td><td class="num">0</td><td class="num">1</td><td class="num">1</td><td class="num">3</td><td class="num">5</td></tr>
+          <tr><td class="text">Claude Opus 4.8</td><td class="num">1</td><td class="num">1</td><td class="num">0</td><td class="num">0</td><td class="num">2</td></tr>
+          <tr><td class="text">Mistral Large 2512</td><td class="num">0</td><td class="num">1</td><td class="num">0</td><td class="num">0</td><td class="num">1</td></tr>
+          <tr><td class="text">GLM 5.2</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">0</td><td class="num">0</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section class="sec" id="examples">
+    <h2>Example games</h2>
+    <ul class="examples">
+      <li>Your companion dog <a href="https://mikeushakov.github.io/doglm/examples/game-01-mail-courier-v3-2-kimi-k3-run1.html">makes circles around you</a> when you pet it,</li>
+      <li>You may <a href="https://mikeushakov.github.io/doglm/examples/game-05-firefly-meadow-v3-2-gpt-5-6-sol-run1.html">adopt a stray dog</a> on a meadow and it will follow you,</li>
+      <li>The dog <a href="https://mikeushakov.github.io/doglm/examples/game-03-night-watchman-v3-1-qwen3-8-max-run4.html">sits and looks at you</a> when you stand next to it,</li>
+      <li>You can toss a dog treat to <a href="https://mikeushakov.github.io/doglm/examples/game-03-night-watchman-v3-2-qwen3-7-max-run1.html">your security dog</a> and to <a href="https://mikeushakov.github.io/doglm/examples/game-01-mail-courier-v3-2-gpt-5-6-sol-run2.html">your postman's dog</a>,</li>
+      <li>Your service dog <a href="https://mikeushakov.github.io/doglm/examples/game-03-night-watchman-v3-2-mistral-large-2512-run1.html">is scared of the security alarm sound</a> and moves closer to you when hearing it,</li>
+      <li>If you guess that you can pet the dog using an interaction key, this action will <a href="https://mikeushakov.github.io/doglm/examples/game-02-harvest-rush-v3-2-gemini-3-1-pro-preview-run1.html">increment the countdown timer</a> in the game,</li>
+      <li>When you start walking next to a stray dog, it <a href="https://mikeushakov.github.io/doglm/examples/game-05-firefly-meadow-v3-2-kimi-k3-run1.html">points you to the fireflies</a> you have to catch, or <a href="https://mikeushakov.github.io/doglm/examples/game-04-gem-maze-v3-2-claude-opus-5-run1.html">sniffs you gems you need to collect</a> in the maze.</li>
+    </ul>
+  </section>
+</main>
+
+<footer class="wrap">
+  <p><br>DogLM is made by <a href="https://mikeushakov.com/">Mike Ushakov</a>.<br>
+  Want to give feedback, support this benchmark, or collaborate? Ping me via <a href="https://www.linkedin.com/in/ushakov/">LinkedIn</a>.</p>
+</footer>
+
+<script>
+(function () {
+  function cellNum(td) {
+    var t = td.textContent.replace(/[$,*\s]/g, '');
+    if (t.indexOf('/') > -1) t = t.split('/')[0];
+    var n = parseFloat(t);
+    return isNaN(n) ? null : n;
+  }
+  document.querySelectorAll('table[data-sortable]').forEach(function (table) {
+    var tb = table.tBodies[0];
+    var rows = Array.prototype.slice.call(tb.rows);
+    var ths = Array.prototype.slice.call(table.tHead.rows[0].cells);
+    ths.forEach(function (th, i) {
+      var numeric = rows.every(function (r) { return cellNum(r.cells[i]) !== null; });
+      if (!numeric) return;
+      th.classList.add('is-sortable');
+      th.tabIndex = 0;
+      th.setAttribute('aria-sort', 'none');
+      th.title = 'Sort by ' + th.textContent.trim();
+      function go() {
+        var dir = th.getAttribute('data-dir') === 'desc' ? 'asc' : 'desc';
+        ths.forEach(function (h) { h.removeAttribute('data-dir'); if (h.classList.contains('is-sortable')) h.setAttribute('aria-sort', 'none'); });
+        th.setAttribute('data-dir', dir);
+        th.setAttribute('aria-sort', dir === 'asc' ? 'ascending' : 'descending');
+        rows.slice().sort(function (a, b) {
+          return (cellNum(a.cells[i]) - cellNum(b.cells[i])) * (dir === 'asc' ? 1 : -1);
+        }).forEach(function (r) { tb.appendChild(r); });
+      }
+      th.addEventListener('click', go);
+      th.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); go(); }
+      });
+    });
+  });
+})();
+</script>
+</body>
+</html>
