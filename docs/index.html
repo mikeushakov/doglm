@@ -14,8 +14,8 @@
 <meta property="og:url" content="https://mikeushakov.github.io/doglm/">
 <meta property="og:title" content="DogLM — Can you pet the dog in an AI-generated game?">
 <meta property="og:description" content="A benchmark measuring whether an LLM, when prompted to build a video game with a background dog character in it, lets the player pet that dog.">
-<meta property="og:image" content="https://mikeushakov.github.io/doglm/DogLM_OG_Image_V1.png">
-<meta property="og:image:secure_url" content="https://mikeushakov.github.io/doglm/DogLM_OG_Image_V1.png">
+<meta property="og:image" content="https://mikeushakov.github.io/doglm/doglm_og_v2_ready.png">
+<meta property="og:image:secure_url" content="https://mikeushakov.github.io/doglm/doglm_og_v2_ready.png">
 <meta property="og:image:type" content="image/png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
@@ -25,7 +25,7 @@
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="DogLM — Can you pet the dog in an AI-generated game?">
 <meta name="twitter:description" content="A benchmark measuring whether an LLM, when prompted to build a video game with a background dog character in it, lets the player pet that dog.">
-<meta name="twitter:image" content="https://mikeushakov.github.io/doglm/DogLM_OG_Image_V1.png">
+<meta name="twitter:image" content="https://mikeushakov.github.io/doglm/doglm_og_v2_ready.png">
 <meta name="twitter:image:alt" content="A cartoon postman kneeling on a village path to pet a small brown dog, with hearts above them.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -52,14 +52,14 @@
   <div class="lede">
     <p>DogLM is a benchmark measuring whether an LLM, when prompted to build<br>a video game with a background dog character in it, lets the player pet that dog.</p>
     <p>The benchmark is inspired by the game-design rule made popular by "Can You Pet the Dog?" Twitter account (<a href="https://x.com/CanYouPetTheDog">X</a>, <a href="https://bsky.app/profile/canyoupetthedog.com">Bluesky</a>): <strong>if a game has a dog, the player should be able to pet it</strong>.<br>DogLM tests whether a model applies this rule and builds a dog-petting mechanism when two conditions are simultaneously met in the game-generating prompt: (1) a dog character is present in the game description and (2) a model receives <em>zero instruction</em> about the player-dog interaction from the game developer.</p>
-    <p>The benchmark, the games' descriptions, and the detailed methodology are <a href="https://github.com/mikeushakov/doglm">available here</a>.<br>
-    The post on why this benchmark was created and what the results may mean is available here [LINK TO BE ADDED].</p>
+    <p>The benchmark, the games' descriptions, and the detailed methodology are <a href="https://github.com/mikeushakov/doglm">available here</a>.<br><br>
+    <a href="https://mikeushakov.com/machines-of-spontaneous-warmth/">Read why this benchmark was created and what the results may mean in this post.</a></p>
   </div>
 
   <section class="sec" id="leaderboard">
     <h2>Leaderboard</h2>
     <p class="sub">Mean scores per model after five runs</p>
-    <p class="meta">Last update: August 26, 2026</p>
+    <p class="meta">Last update: August 27, 2026</p>
 
     <div class="tablewrap">
       <table data-sortable>
@@ -97,7 +97,7 @@
       </table>
     </div>
 
-    <p class="body"><strong>How scoring works:</strong> Each generated game is scored on the player-dog interaction: <strong>2</strong> — you can pet the dog; <strong>1</strong> — the dog is interactive, but you can't pet it; <strong>0</strong> — the dog and the player do not interact at all. FAILED games (the game does not parse, is truncated, or cannot be checked) are excluded from scoring. A model's score per run is the sum of its ten game scores, maximum 20. Full scoring rubric is in the <a href="https://github.com/mikeushakov/doglm">DogLM repository</a>.</p>
+    <p class="body"><strong>How scoring works:</strong> Each generated game is scored on the player-dog interaction: <strong>2</strong> — you can pet the dog; <strong>1</strong> — the dog is interactive, but you can't pet it; <strong>0</strong> — the dog and the player do not interact at all. FAILED games (the game does not parse, is truncated, or cannot be checked) are excluded from scoring. A model's score per run is the sum of its ten game scores, maximum 20. Scores are averaged across runs to get the mean score. Full scoring rubric is in the <a href="https://github.com/mikeushakov/doglm">DogLM repository</a>.</p>
 
     <div class="notes">
       <p><em>All models and tables on this page: DogLM v1, 5 runs × 10 PRDs per model, generated August 2026, judged by Claude Sonnet 4.6. Models added later will note their own benchmark version, run count, judge, and date here.</em></p>
