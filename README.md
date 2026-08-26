@@ -46,6 +46,10 @@ Scoring is done by an LLM judge that reads the game's HTML code and returns a sc
 A `node --check` syntax gate runs first; if the game's JavaScript does not parse it is marked FAILED and not scored.
 
 
+## Results
+The benchmark results page is available [here](https://mikeushakov.github.io/doglm/).
+
+
 ## Requirements
 
 - Python 3.9+ with `requests` (`pip install requests`)
