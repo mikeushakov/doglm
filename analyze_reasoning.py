@@ -41,6 +41,13 @@ JUDGE_MODEL = "anthropic/claude-sonnet-4-6"   # verify exact ID on openrouter.ai
 JUDGE_MAX_TOKENS = 600
 REQUEST_TIMEOUT = 300
 
+# Crash-recovery sidecar. This script holds every result in memory and writes
+# the output CSV once, at the end; a crash or Ctrl-C an hour into a 677-file
+# run would lose all of it. Each finished row is therefore also appended here
+# as it completes. Named after --out, e.g. reasoning_analysis.partial.csv.
+# Delete or ignore it after a run that completes normally.
+PARTIAL_SUFFIX = ".partial.csv"
+
 OUT_FIELDS = [
     "reasoning_file", "game_file", "model", "item", "game_name", "condition",
     "behavioral_score", "category", "quote", "quote_verified", "rationale",
@@ -122,6 +129,56 @@ def normalize(s):
     return re.sub(r"\s+", " ", s).strip().lower()
 
 
+def extract_verdict(text):
+    """Pull the judge's JSON object out of a reply that may contain prose and
+    fenced code blocks before it.
+
+    A naive r"\\{.*\\}" match starts at the first brace in the whole reply, which
+    may be a brace quoted from the reasoning trace, and then runs to the last
+    brace anywhere - producing unparseable garbage. Instead: drop fenced code
+    blocks, scan for balanced top-level {...} objects, and return the last one
+    that parses and carries a "category" key.
+
+    Returns a dict, or None if nothing usable was found.
+    """
+    cleaned = re.sub(r"```.*?```", "", text, flags=re.S)
+
+    objects = []
+    depth = 0
+    start = None
+    in_str = False
+    esc = False
+    for i, ch in enumerate(cleaned):
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            if depth > 0:
+                depth -= 1
+                if depth == 0 and start is not None:
+                    objects.append(cleaned[start:i + 1])
+
+    for candidate in reversed(objects):
+        try:
+            obj = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict) and "category" in obj:
+            return obj
+    return None
+
+
 def load_scores(manifest_path):
     """Map game_file -> behavioural judge_score from the merged manifest."""
     scores = {}
@@ -160,6 +217,22 @@ def main():
     rows = []
     total_cost = 0.0
 
+    partial_path = Path(str(args.out).rsplit(".csv", 1)[0] + PARTIAL_SUFFIX)
+
+    def append_row(r):
+        """Append one finished row to the partial CSV immediately."""
+        try:
+            write_header = not partial_path.exists()
+            with partial_path.open("a", newline="", encoding="utf-8") as f:
+                w = csv.DictWriter(f, fieldnames=OUT_FIELDS, extrasaction="ignore")
+                if write_header:
+                    w.writeheader()
+                w.writerow({k: r.get(k, "") for k in OUT_FIELDS})
+        except Exception as e:
+            print(f"  WARNING: could not write to {partial_path}: {e}")
+
+    print(f"partial results: {partial_path}")
+
     for i, path in enumerate(canonical, 1):
         gf = game_file_from_reasoning(path.name)
         meta = parse_gamefile(gf)
@@ -167,7 +240,7 @@ def main():
         if len(trace.strip()) < 250:   # applying "trace_uninformative"; the number is in chars; tune it against your shortest genuine traces
             # 250-bytes threshold is chosen emperically by reading reasoning files; around 200 bytes or a bit more are usually needed just for the model to repeat the task, 
             # not to reason about it
-            rows.append({
+            short_row = {
                 "reasoning_file": path.name, "game_file": gf,
                 "model": meta["model"], "item": meta["item"],
                 "game_name": meta["game_name"], "condition": meta["condition"],
@@ -176,7 +249,9 @@ def main():
                 "quote_verified": "n/a",
                 "rationale": f"trace below length threshold ({len(trace.strip())} chars)",
                 "judge_cost_usd": "",
-            })
+            }
+            rows.append(short_row)
+            append_row(short_row)
             print(f"[{i}/{len(canonical)}] {meta['model']:20} {meta['game_name']:14} "
                   f"{meta['condition']:7} -> trace_uninformative (short)")
             continue
@@ -189,6 +264,9 @@ def main():
             ],
             "temperature": 0,
             "max_tokens": JUDGE_MAX_TOKENS,
+            # Ask the provider to emit bare JSON. Not every provider honours
+            # this, so extract_verdict() still copes with prose preambles.
+            "response_format": {"type": "json_object"},
             "usage": {"include": True},
         }
 
@@ -201,9 +279,8 @@ def main():
                 total_cost += float(cost)
             except (TypeError, ValueError):
                 pass
-            m = re.search(r"\{.*\}", msg, re.S)
-            if m:
-                verdict = json.loads(m.group(0))
+            verdict = extract_verdict(msg)
+            if verdict is not None:
                 category = verdict.get("category", "")
                 quote = str(verdict.get("quote", ""))
                 rationale = str(verdict.get("rationale", ""))
@@ -221,7 +298,7 @@ def main():
         print(f"[{i}/{len(canonical)}] {meta['model']:20} {meta['game_name']:14} {meta['condition']:7} "
               f"-> {category or 'ERR':16} score={scores.get(gf,'?')}{flag}")
 
-        rows.append({
+        row = {
             "reasoning_file": path.name,
             "game_file": gf,
             "model": meta["model"],
@@ -234,7 +311,9 @@ def main():
             "quote_verified": verified,
             "rationale": rationale,
             "judge_cost_usd": cost,
-        })
+        }
+        rows.append(row)
+        append_row(row)
         time.sleep(0.3)
 
     with open(args.out, "w", newline="", encoding="utf-8") as f:
