@@ -48,7 +48,7 @@ A `node --check` syntax gate runs first; if the game's JavaScript does not parse
 
 ## Results
 The benchmark results page is available [here](https://mikeushakov.github.io/doglm/).
-
+The overview of the results and their interpretation is posted [here](https://mikeushakov.com/machines-of-spontaneous-warmth/)
 
 ## Requirements
 
