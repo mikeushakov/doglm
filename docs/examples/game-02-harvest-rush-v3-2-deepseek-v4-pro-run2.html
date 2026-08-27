@@ -1,0 +1,1142 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Harvest Rush</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            background: #1a1a2e;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            overflow: hidden;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        canvas {
+            border-radius: 12px;
+            box-shadow: 0 0 60px rgba(100, 180, 80, 0.25), 0 0 120px rgba(0, 0, 0, 0.5);
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="game" width="800" height="600"></canvas>
+    <script>
+        (function() {
+            const canvas = document.getElementById('game');
+            const ctx = canvas.getContext('2d');
+
+            // ─────────────────────────────────────
+            // CONSTANTS
+            // ─────────────────────────────────────
+            const CANVAS_W = 800;
+            const CANVAS_H = 600;
+            const FIELD_MIN_X = 52;
+            const FIELD_MAX_X = 748;
+            const FIELD_MIN_Y = 52;
+            const FIELD_MAX_Y = 548;
+            const PLAYER_SPEED = 210;
+            const SPRINT_MULT = 1.55;
+            const HARVEST_RADIUS = 42;
+            const GAME_DURATION = 90;
+            const STAMINA_MAX = 100;
+            const STAMINA_DRAIN_RATE = 28;
+            const STAMINA_REGEN_RATE = 18;
+            const STAMINA_MIN_SPRINT = 18;
+            const DOG_SPEED_MIN = 45;
+            const DOG_SPEED_MAX = 95;
+            const DOG_PET_RANGE = 58;
+            const DOG_PET_BOOST_DURATION = 5.5;
+            const DOG_PET_COOLDOWN = 14;
+            const DOG_WANDER_CHANGE_MIN = 1.6;
+            const DOG_WANDER_CHANGE_MAX = 3.8;
+            const DOG_SNIFF_DURATION = 1.4;
+            const DOG_SNIFF_CHANCE = 0.18;
+            const PLAYER_RADIUS = 17;
+            const DOG_RADIUS = 14;
+            const CROP_RADIUS = 16;
+            const GLOW_PULSE_SPEED = 2.8;
+            const GLOW_MIN = 10;
+            const GLOW_MAX = 24;
+            const GOLDEN_GLOW_MIN = 14;
+            const GOLDEN_GLOW_MAX = 30;
+
+            // ─────────────────────────────────────
+            // GAME STATE
+            // ─────────────────────────────────────
+            let gameState = 'playing'; // 'playing' | 'victory' | 'defeat'
+            let timeLeft = GAME_DURATION;
+            let cropsRemaining = 10;
+            let player = null;
+            let crops = [];
+            let dog = null;
+            let popups = [];
+            let particles = [];
+            let stamina = STAMINA_MAX;
+            let dogPetCooldown = 0;
+            let dogPetBoostTimer = 0;
+            let instructionAlpha = 1;
+            let instructionTimer = 6.5;
+            let goldenCropIndex = -1;
+            let elapsedTotal = 0;
+            let lastTime = null;
+            let keys = {};
+            let prevKeys = {};
+            let dogWanderTimer = 0;
+            let dogSniffTimer = 0;
+            let dogIsSniffing = false;
+            let playerMoving = false;
+            let lastPlayerDx = 0;
+            let lastPlayerDy = 0;
+            let screenShakeTimer = 0;
+            let screenShakeIntensity = 0;
+
+            // ─────────────────────────────────────
+            // CROP POSITIONS (fixed spread)
+            // ─────────────────────────────────────
+            const cropPositions = [
+                { x: 125, y: 135 },
+                { x: 320, y: 108 },
+                { x: 530, y: 122 },
+                { x: 692, y: 215 },
+                { x: 195, y: 295 },
+                { x: 400, y: 325 },
+                { x: 615, y: 355 },
+                { x: 265, y: 455 },
+                { x: 495, y: 442 },
+                { x: 555, y: 238 },
+            ];
+
+            // ─────────────────────────────────────
+            // INIT / RESET
+            // ─────────────────────────────────────
+            function init() {
+                gameState = 'playing';
+                timeLeft = GAME_DURATION;
+                cropsRemaining = 10;
+                stamina = STAMINA_MAX;
+                dogPetCooldown = 0;
+                dogPetBoostTimer = 0;
+                instructionAlpha = 1;
+                instructionTimer = 6.5;
+                elapsedTotal = 0;
+                lastTime = null;
+                popups = [];
+                particles = [];
+                screenShakeTimer = 0;
+                screenShakeIntensity = 0;
+                dogWanderTimer = 0;
+                dogSniffTimer = 0;
+                dogIsSniffing = false;
+                playerMoving = false;
+                lastPlayerDx = 0;
+                lastPlayerDy = 0;
+                keys = {};
+                prevKeys = {};
+
+                player = {
+                    x: 400,
+                    y: 505,
+                    radius: PLAYER_RADIUS,
+                };
+
+                dog = {
+                    x: 220 + Math.random() * 300,
+                    y: 180 + Math.random() * 280,
+                    vx: (Math.random() - 0.5) * 100,
+                    vy: (Math.random() - 0.5) * 100,
+                    radius: DOG_RADIUS,
+                };
+                // Normalize dog velocity
+                const dogSpeed = Math.sqrt(dog.vx * dog.vx + dog.vy * dog.vy);
+                if (dogSpeed < 20) {
+                    dog.vx = 60;
+                    dog.vy = 30;
+                }
+                const targetSpeed = DOG_SPEED_MIN + Math.random() * (DOG_SPEED_MAX - DOG_SPEED_MIN);
+                const mag = Math.sqrt(dog.vx * dog.vx + dog.vy * dog.vy) || 1;
+                dog.vx = (dog.vx / mag) * targetSpeed;
+                dog.vy = (dog.vy / mag) * targetSpeed;
+                dogWanderTimer = DOG_WANDER_CHANGE_MIN + Math.random() * (DOG_WANDER_CHANGE_MAX - DOG_WANDER_CHANGE_MIN);
+
+                crops = cropPositions.map((pos, i) => ({
+                    x: pos.x,
+                    y: pos.y,
+                    harvested: false,
+                    radius: CROP_RADIUS,
+                }));
+
+                // Pick random golden crop
+                goldenCropIndex = Math.floor(Math.random() * 10);
+            }
+
+            // ─────────────────────────────────────
+            // INPUT HANDLING
+            // ─────────────────────────────────────
+            window.addEventListener('keydown', (e) => {
+                const k = e.key.toLowerCase();
+                keys[k] = true;
+                const gameKeys = ['arrowup', 'arrowdown', 'arrowleft', 'arrowright',
+                    'w', 'a', 's', 'd', ' ', 'space', 'shift', 'e', 'r'
+                ];
+                if (gameKeys.includes(k) || k === ' ') {
+                    e.preventDefault();
+                }
+                // Handle R for restart
+                if (k === 'r' && (gameState === 'victory' || gameState === 'defeat')) {
+                    init();
+                }
+                // Handle space for harvest (one-shot)
+                if ((k === ' ' || k === 'space') && gameState === 'playing') {
+                    if (!prevKeys[' ']) {
+                        attemptHarvest();
+                    }
+                }
+                // Handle E for petting dog
+                if (k === 'e' && gameState === 'playing') {
+                    if (!prevKeys['e']) {
+                        attemptPetDog();
+                    }
+                }
+            });
+
+            window.addEventListener('keyup', (e) => {
+                const k = e.key.toLowerCase();
+                keys[k] = false;
+            });
+
+            // ─────────────────────────────────────
+            // HARVEST LOGIC
+            // ─────────────────────────────────────
+            function attemptHarvest() {
+                if (gameState !== 'playing') return;
+                let closestIdx = -1;
+                let closestDist = Infinity;
+                for (let i = 0; i < crops.length; i++) {
+                    if (crops[i].harvested) continue;
+                    const dx = player.x - crops[i].x;
+                    const dy = player.y - crops[i].y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist < HARVEST_RADIUS && dist < closestDist) {
+                        closestDist = dist;
+                        closestIdx = i;
+                    }
+                }
+                if (closestIdx >= 0) {
+                    harvestCrop(closestIdx);
+                }
+            }
+
+            function harvestCrop(index) {
+                const crop = crops[index];
+                crop.harvested = true;
+                cropsRemaining--;
+                const isGolden = (index === goldenCropIndex);
+
+                // Popup
+                if (isGolden) {
+                    popups.push({
+                        x: crop.x,
+                        y: crop.y,
+                        text: '⭐ Golden! +5s',
+                        alpha: 1,
+                        life: 1.3,
+                        color: '#FFD700',
+                        vy: -55,
+                    });
+                    timeLeft += 5;
+                    // Spawn extra golden particles
+                    spawnParticles(crop.x, crop.y, '#FFD700', 18);
+                    spawnParticles(crop.x, crop.y, '#FFA500', 12);
+                    screenShakeTimer = 0.35;
+                    screenShakeIntensity = 6;
+                } else {
+                    popups.push({
+                        x: crop.x,
+                        y: crop.y,
+                        text: 'Harvested!',
+                        alpha: 1,
+                        life: 0.9,
+                        color: '#E0FFC0',
+                        vy: -48,
+                    });
+                    spawnParticles(crop.x, crop.y, '#7EC850', 10);
+                    spawnParticles(crop.x, crop.y, '#A0E870', 6);
+                    screenShakeTimer = 0.2;
+                    screenShakeIntensity = 3;
+                }
+
+                // Check victory
+                if (cropsRemaining <= 0) {
+                    gameState = 'victory';
+                    timeLeft = Math.max(0, timeLeft);
+                }
+            }
+
+            function spawnParticles(x, y, color, count) {
+                for (let i = 0; i < count; i++) {
+                    const angle = Math.random() * Math.PI * 2;
+                    const speed = 60 + Math.random() * 180;
+                    particles.push({
+                        x: x,
+                        y: y,
+                        vx: Math.cos(angle) * speed,
+                        vy: Math.sin(angle) * speed - 30 - Math.random() * 60,
+                        alpha: 1,
+                        life: 0.4 + Math.random() * 0.55,
+                        color: color,
+                        radius: 2 + Math.random() * 4.5,
+                    });
+                }
+            }
+
+            // ─────────────────────────────────────
+            // DOG PETTING
+            // ─────────────────────────────────────
+            function attemptPetDog() {
+                if (gameState !== 'playing') return;
+                if (dogPetCooldown > 0) return;
+                const dx = player.x - dog.x;
+                const dy = player.y - dog.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                if (dist < DOG_PET_RANGE) {
+                    dogPetBoostTimer = DOG_PET_BOOST_DURATION;
+                    dogPetCooldown = DOG_PET_COOLDOWN;
+                    popups.push({
+                        x: dog.x,
+                        y: dog.y - 20,
+                        text: '❤️ Good dog!',
+                        alpha: 1,
+                        life: 1.2,
+                        color: '#FF6B8A',
+                        vy: -40,
+                    });
+                    spawnParticles(dog.x, dog.y, '#FFB0C0', 8);
+                    // Dog gets excited and changes direction
+                    const angle = Math.random() * Math.PI * 2;
+                    const spd = DOG_SPEED_MAX;
+                    dog.vx = Math.cos(angle) * spd;
+                    dog.vy = Math.sin(angle) * spd;
+                    dogIsSniffing = false;
+                    dogSniffTimer = 0;
+                    dogWanderTimer = DOG_WANDER_CHANGE_MIN + Math.random() * 1.5;
+                }
+            }
+
+            // ─────────────────────────────────────
+            // UPDATE
+            // ─────────────────────────────────────
+            function update(dt) {
+                if (gameState === 'playing') {
+                    // Timer
+                    timeLeft -= dt;
+                    if (timeLeft <= 0) {
+                        timeLeft = 0;
+                        if (cropsRemaining > 0) {
+                            gameState = 'defeat';
+                        }
+                    }
+
+                    // Check defeat (if crops remain and time is up)
+                    if (gameState === 'playing' && timeLeft <= 0 && cropsRemaining > 0) {
+                        gameState = 'defeat';
+                    }
+
+                    if (gameState === 'playing') {
+                        // ── PLAYER MOVEMENT ──
+                        let mx = 0;
+                        let my = 0;
+                        if (keys['w'] || keys['arrowup']) my -= 1;
+                        if (keys['s'] || keys['arrowdown']) my += 1;
+                        if (keys['a'] || keys['arrowleft']) mx -= 1;
+                        if (keys['d'] || keys['arrowright']) mx += 1;
+
+                        // Normalize diagonal
+                        const mag = Math.sqrt(mx * mx + my * my);
+                        if (mag > 1) {
+                            mx /= mag;
+                            my /= mag;
+                        }
+                        playerMoving = mag > 0.01;
+                        if (playerMoving) {
+                            lastPlayerDx = mx;
+                            lastPlayerDy = my;
+                        }
+
+                        // Sprint
+                        const shiftHeld = keys['shift'] || false;
+                        let speedMult = 1;
+                        if (shiftHeld && stamina > STAMINA_MIN_SPRINT && playerMoving) {
+                            speedMult = SPRINT_MULT;
+                            stamina -= STAMINA_DRAIN_RATE * dt;
+                            if (stamina < 0) stamina = 0;
+                        } else {
+                            stamina += STAMINA_REGEN_RATE * dt;
+                            if (stamina > STAMINA_MAX) stamina = STAMINA_MAX;
+                        }
+
+                        // Dog pet boost
+                        if (dogPetBoostTimer > 0) {
+                            dogPetBoostTimer -= dt;
+                            if (dogPetBoostTimer < 0) dogPetBoostTimer = 0;
+                            speedMult *= 1.28;
+                        }
+
+                        // Dog pet cooldown
+                        if (dogPetCooldown > 0) {
+                            dogPetCooldown -= dt;
+                            if (dogPetCooldown < 0) dogPetCooldown = 0;
+                        }
+
+                        const currentSpeed = PLAYER_SPEED * speedMult;
+                        player.x += mx * currentSpeed * dt;
+                        player.y += my * currentSpeed * dt;
+
+                        // Clamp player to field
+                        player.x = Math.max(FIELD_MIN_X + player.radius, Math.min(FIELD_MAX_X - player.radius,
+                            player.x));
+                        player.y = Math.max(FIELD_MIN_Y + player.radius, Math.min(FIELD_MAX_Y - player.radius,
+                            player.y));
+
+                        // ── DOG MOVEMENT ──
+                        if (dogSniffTimer > 0) {
+                            dogSniffTimer -= dt;
+                            if (dogSniffTimer <= 0) {
+                                dogIsSniffing = false;
+                                // Resume wandering
+                                const angle = Math.random() * Math.PI * 2;
+                                const spd = DOG_SPEED_MIN + Math.random() * (DOG_SPEED_MAX - DOG_SPEED_MIN);
+                                dog.vx = Math.cos(angle) * spd;
+                                dog.vy = Math.sin(angle) * spd;
+                                dogWanderTimer = DOG_WANDER_CHANGE_MIN + Math.random() * (DOG_WANDER_CHANGE_MAX -
+                                    DOG_WANDER_CHANGE_MIN);
+                            }
+                        } else if (dogIsSniffing) {
+                            dog.vx *= 0.9;
+                            dog.vy *= 0.9;
+                            if (Math.abs(dog.vx) < 2 && Math.abs(dog.vy) < 2) {
+                                dog.vx = 0;
+                                dog.vy = 0;
+                            }
+                        } else {
+                            dogWanderTimer -= dt;
+                            if (dogWanderTimer <= 0) {
+                                // Change direction or sniff
+                                if (Math.random() < DOG_SNIFF_CHANCE) {
+                                    dogIsSniffing = true;
+                                    dogSniffTimer = DOG_SNIFF_DURATION;
+                                    dog.vx *= 0.3;
+                                    dog.vy *= 0.3;
+                                } else {
+                                    const angle = Math.random() * Math.PI * 2;
+                                    const spd = DOG_SPEED_MIN + Math.random() * (DOG_SPEED_MAX - DOG_SPEED_MIN);
+                                    dog.vx = Math.cos(angle) * spd;
+                                    dog.vy = Math.sin(angle) * spd;
+                                    dogWanderTimer = DOG_WANDER_CHANGE_MIN + Math.random() * (DOG_WANDER_CHANGE_MAX -
+                                        DOG_WANDER_CHANGE_MIN);
+                                }
+                            }
+                        }
+
+                        dog.x += dog.vx * dt;
+                        dog.y += dog.vy * dt;
+
+                        // Bounce dog off field boundaries
+                        if (dog.x - dog.radius < FIELD_MIN_X) {
+                            dog.x = FIELD_MIN_X + dog.radius;
+                            dog.vx = Math.abs(dog.vx);
+                        }
+                        if (dog.x + dog.radius > FIELD_MAX_X) {
+                            dog.x = FIELD_MAX_X - dog.radius;
+                            dog.vx = -Math.abs(dog.vx);
+                        }
+                        if (dog.y - dog.radius < FIELD_MIN_Y) {
+                            dog.y = FIELD_MIN_Y + dog.radius;
+                            dog.vy = Math.abs(dog.vy);
+                        }
+                        if (dog.y + dog.radius > FIELD_MAX_Y) {
+                            dog.y = FIELD_MAX_Y - dog.radius;
+                            dog.vy = -Math.abs(dog.vy);
+                        }
+
+                        // ── UPDATE POPUPS ──
+                        for (let i = popups.length - 1; i >= 0; i--) {
+                            const p = popups[i];
+                            p.life -= dt;
+                            p.y += p.vy * dt;
+                            p.alpha = Math.max(0, p.life / (p.life + dt + 0.01));
+                            if (p.life <= 0) {
+                                popups.splice(i, 1);
+                            }
+                        }
+
+                        // ── UPDATE PARTICLES ──
+                        for (let i = particles.length - 1; i >= 0; i--) {
+                            const p = particles[i];
+                            p.life -= dt;
+                            p.x += p.vx * dt;
+                            p.y += p.vy * dt;
+                            p.vy += 120 * dt; // gravity
+                            p.alpha = Math.max(0, p.life / (p.life + dt + 0.01));
+                            if (p.life <= 0) {
+                                particles.splice(i, 1);
+                            }
+                        }
+
+                        // ── SCREEN SHAKE ──
+                        if (screenShakeTimer > 0) {
+                            screenShakeTimer -= dt;
+                            if (screenShakeTimer < 0) screenShakeTimer = 0;
+                        }
+                    }
+                }
+
+                // Instruction timer
+                if (instructionTimer > 0) {
+                    instructionTimer -= dt;
+                    if (instructionTimer < 1.5) {
+                        instructionAlpha = Math.max(0, instructionTimer / 1.5);
+                    }
+                }
+
+                // Update prevKeys
+                prevKeys[' '] = keys[' '] || false;
+                prevKeys['e'] = keys['e'] || false;
+                prevKeys['shift'] = keys['shift'] || false;
+            }
+
+            // ─────────────────────────────────────
+            // RENDER
+            // ─────────────────────────────────────
+            function render() {
+                ctx.clearRect(0, 0, CANVAS_W, CANVAS_H);
+
+                // Screen shake offset
+                let shakeX = 0;
+                let shakeY = 0;
+                if (screenShakeTimer > 0 && gameState === 'playing') {
+                    const intensity = screenShakeIntensity * (screenShakeTimer / 0.35);
+                    shakeX = (Math.random() - 0.5) * intensity * 2;
+                    shakeY = (Math.random() - 0.5) * intensity * 2;
+                }
+
+                ctx.save();
+                ctx.translate(shakeX, shakeY);
+
+                // ── SKY / BACKGROUND ──
+                const skyGrad = ctx.createLinearGradient(0, 0, 0, CANVAS_H);
+                skyGrad.addColorStop(0, '#87CEEB');
+                skyGrad.addColorStop(0.35, '#B8DCF0');
+                skyGrad.addColorStop(0.55, '#C8E6C9');
+                skyGrad.addColorStop(1, '#8BC34A');
+                ctx.fillStyle = skyGrad;
+                ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+
+                // ── FIELD GROUND ──
+                ctx.fillStyle = '#8BC34A';
+                ctx.fillRect(FIELD_MIN_X - 8, FIELD_MIN_Y - 8, FIELD_MAX_X - FIELD_MIN_X + 16, FIELD_MAX_Y - FIELD_MIN_Y +
+                    16);
+
+                // Subtle field texture
+                ctx.fillStyle = '#7CB342';
+                for (let i = 0; i < 60; i++) {
+                    const tx = FIELD_MIN_X + Math.random() * (FIELD_MAX_X - FIELD_MIN_X);
+                    const ty = FIELD_MIN_Y + Math.random() * (FIELD_MAX_Y - FIELD_MIN_Y);
+                    ctx.beginPath();
+                    ctx.arc(tx, ty, 4 + Math.random() * 10, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // Dirt patches
+                ctx.fillStyle = '#A08060';
+                ctx.beginPath();
+                ctx.ellipse(180, 390, 55, 28, 0.2, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.ellipse(580, 480, 42, 22, -0.15, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.ellipse(350, 170, 38, 18, 0.3, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#B8956E';
+                ctx.beginPath();
+                ctx.ellipse(190, 395, 40, 18, 0.2, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.ellipse(590, 485, 30, 14, -0.15, 0, Math.PI * 2);
+                ctx.fill();
+
+                // ── WATER TROUGH ──
+                ctx.fillStyle = '#6B8FA0';
+                ctx.fillRect(630, 470, 70, 32);
+                ctx.strokeStyle = '#4A6068';
+                ctx.lineWidth = 3;
+                ctx.strokeRect(630, 470, 70, 32);
+                ctx.fillStyle = '#7EC8E3';
+                ctx.fillRect(634, 474, 62, 24);
+                // Water shimmer
+                ctx.fillStyle = 'rgba(255,255,255,0.4)';
+                ctx.fillRect(636, 476, 20, 4);
+                ctx.fillRect(660, 480, 30, 3);
+
+                // ── FENCE ──
+                drawFence();
+
+                // ── CROPS ──
+                const now = elapsedTotal;
+                for (let i = 0; i < crops.length; i++) {
+                    const crop = crops[i];
+                    if (crop.harvested) continue;
+                    const isGolden = (i === goldenCropIndex);
+                    const pulse = Math.sin(now * GLOW_PULSE_SPEED + i * 1.3) * 0.5 + 0.5;
+                    const glowSize = isGolden ?
+                        GOLDEN_GLOW_MIN + pulse * (GOLDEN_GLOW_MAX - GOLDEN_GLOW_MIN) :
+                        GLOW_MIN + pulse * (GLOW_MAX - GLOW_MIN);
+
+                    // Check if player is nearby for extra glow
+                    const dx = player.x - crop.x;
+                    const dy = player.y - crop.y;
+                    const distToPlayer = Math.sqrt(dx * dx + dy * dy);
+                    const nearBoost = distToPlayer < HARVEST_RADIUS * 1.6 ? 1.4 : 1;
+                    const finalGlow = glowSize * nearBoost;
+
+                    // Outer glow
+                    ctx.save();
+                    ctx.shadowColor = isGolden ? '#FFB800' : '#A0FF60';
+                    ctx.shadowBlur = finalGlow;
+                    ctx.fillStyle = isGolden ? '#FFC107' : '#7EC850';
+                    ctx.beginPath();
+                    ctx.arc(crop.x, crop.y, crop.radius, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
+
+                    // Inner highlight
+                    ctx.fillStyle = isGolden ? '#FFE082' : '#B8FF80';
+                    ctx.beginPath();
+                    ctx.arc(crop.x - 2, crop.y - 3, crop.radius * 0.5, 0, Math.PI * 2);
+                    ctx.fill();
+
+                    // Small plant symbol
+                    ctx.fillStyle = isGolden ? '#8B6914' : '#3E6B27';
+                    ctx.beginPath();
+                    ctx.arc(crop.x, crop.y, crop.radius * 0.28, 0, Math.PI * 2);
+                    ctx.fill();
+                    // Tiny leaves
+                    const leafAngles = [0, 2.1, 4.2];
+                    for (const la of leafAngles) {
+                        const lx = crop.x + Math.cos(la) * crop.radius * 0.55;
+                        const ly = crop.y + Math.sin(la) * crop.radius * 0.55;
+                        ctx.fillStyle = isGolden ? '#D4A017' : '#5A9E3F';
+                        ctx.beginPath();
+                        ctx.arc(lx, ly, crop.radius * 0.22, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+
+                    // Golden sparkles
+                    if (isGolden) {
+                        const sparkleCount = 3;
+                        for (let s = 0; s < sparkleCount; s++) {
+                            const sa = now * 4 + s * 2.1;
+                            const sr = crop.radius + 8 + Math.sin(now * 6 + s) * 6;
+                            const sx = crop.x + Math.cos(sa) * sr;
+                            const sy = crop.y + Math.sin(sa) * sr;
+                            ctx.fillStyle = 'rgba(255,255,200,' + (0.5 + Math.sin(now * 8 + s) * 0.4) + ')';
+                            ctx.beginPath();
+                            ctx.arc(sx, sy, 2.5, 0, Math.PI * 2);
+                            ctx.fill();
+                        }
+                    }
+
+                    // "Press Space" hint when near
+                    if (distToPlayer < HARVEST_RADIUS * 1.5 && gameState === 'playing') {
+                        const hintAlpha = 0.5 + Math.sin(now * 3) * 0.35;
+                        ctx.fillStyle = 'rgba(255,255,255,' + Math.max(0, hintAlpha) + ')';
+                        ctx.font = 'bold 11px "Segoe UI", system-ui, sans-serif';
+                        ctx.textAlign = 'center';
+                        ctx.fillText('SPACE', crop.x, crop.y - crop.radius - 14);
+                    }
+                }
+
+                // ── DOG ──
+                drawDog(dog.x, dog.y);
+
+                // ── PLAYER ──
+                drawPlayer(player.x, player.y);
+
+                // ── PARTICLES ──
+                for (const p of particles) {
+                    ctx.fillStyle = p.color.replace(')', ', ' + p.alpha + ')').replace('rgb',
+                        'rgba');
+                    if (p.color.startsWith('#')) {
+                        const hex = p.color;
+                        const r = parseInt(hex.slice(1, 3), 16);
+                        const g = parseInt(hex.slice(3, 5), 16);
+                        const b = parseInt(hex.slice(5, 7), 16);
+                        ctx.fillStyle = 'rgba(' + r + ',' + g + ',' + b + ',' + p.alpha + ')';
+                    }
+                    ctx.beginPath();
+                    ctx.arc(p.x, p.y, p.radius * p.alpha, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+
+                // ── POPUPS ──
+                for (const p of popups) {
+                    ctx.fillStyle = p.color.replace(')', ', ' + p.alpha + ')').replace('rgb', 'rgba');
+                    if (p.color.startsWith('#')) {
+                        const hex = p.color;
+                        const r = parseInt(hex.slice(1, 3), 16);
+                        const g = parseInt(hex.slice(3, 5), 16);
+                        const b = parseInt(hex.slice(5, 7), 16);
+                        ctx.fillStyle = 'rgba(' + r + ',' + g + ',' + b + ',' + p.alpha + ')';
+                    }
+                    ctx.font = 'bold 15px "Segoe UI", system-ui, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(p.text, p.x, p.y);
+                    // Outline for readability
+                    ctx.strokeStyle = 'rgba(0,0,0,' + (p.alpha * 0.5) + ')';
+                    ctx.lineWidth = 2.5;
+                    ctx.strokeText(p.text, p.x, p.y);
+                }
+
+                ctx.restore();
+
+                // ── HUD (no shake) ──
+                drawHUD();
+
+                // ── INSTRUCTIONS ──
+                if (instructionTimer > 0 && instructionAlpha > 0.01 && gameState === 'playing') {
+                    ctx.fillStyle = 'rgba(255,255,255,' + instructionAlpha + ')';
+                    ctx.font = 'bold 15px "Segoe UI", system-ui, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('🎯 Harvest all 10 crops before time runs out!', CANVAS_W / 2, CANVAS_H - 30);
+                    ctx.fillText('Move: WASD / Arrows | Harvest: Space | Sprint: Shift | Pet dog: E',
+                        CANVAS_W / 2, CANVAS_H - 10);
+                }
+
+                // ── END SCREEN OVERLAY ──
+                if (gameState === 'victory' || gameState === 'defeat') {
+                    ctx.fillStyle = 'rgba(0,0,0,0.65)';
+                    ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+
+                    // Panel
+                    const panelW = 420;
+                    const panelH = 200;
+                    const panelX = CANVAS_W / 2 - panelW / 2;
+                    const panelY = CANVAS_H / 2 - panelH / 2;
+                    ctx.fillStyle = 'rgba(30,30,40,0.9)';
+                    ctx.strokeStyle = gameState === 'victory' ? '#FFD700' : '#E85D5D';
+                    ctx.lineWidth = 4;
+                    ctx.beginPath();
+                    ctx.roundRect(panelX, panelY, panelW, panelH, 20);
+                    ctx.fill();
+                    ctx.stroke();
+
+                    ctx.textAlign = 'center';
+                    if (gameState === 'victory') {
+                        ctx.fillStyle = '#FFD700';
+                        ctx.font = 'bold 36px "Segoe UI", system-ui, sans-serif';
+                        ctx.fillText('🌾 Harvest Complete! 🌾', CANVAS_W / 2, panelY + 60);
+                        ctx.fillStyle = '#E0E0E0';
+                        ctx.font = 'bold 20px "Segoe UI", system-ui, sans-serif';
+                        ctx.fillText('You win! All crops harvested!', CANVAS_W / 2, panelY + 105);
+                    } else {
+                        ctx.fillStyle = '#FF6B6B';
+                        ctx.font = 'bold 36px "Segoe UI", system-ui, sans-serif';
+                        ctx.fillText('🌅 Sundown! Time is up.', CANVAS_W / 2, panelY + 60);
+                        ctx.fillStyle = '#E0E0E0';
+                        ctx.font = 'bold 20px "Segoe UI", system-ui, sans-serif';
+                        ctx.fillText('Crops remaining: ' + cropsRemaining, CANVAS_W / 2, panelY + 105);
+                    }
+                    ctx.fillStyle = '#FFFFFF';
+                    ctx.font = 'bold 18px "Segoe UI", system-ui, sans-serif';
+                    const pulseR = 0.7 + Math.sin(elapsedTotal * 3) * 0.3;
+                    ctx.fillStyle = 'rgba(255,255,255,' + pulseR + ')';
+                    ctx.fillText('Press R to restart', CANVAS_W / 2, panelY + 150);
+                }
+            }
+
+            // ─────────────────────────────────────
+            // DRAW HELPERS
+            // ─────────────────────────────────────
+            function drawFence() {
+                const postW = 8;
+                const postH = 18;
+                const railThick = 4;
+                const fenceInset = 44;
+                const topY = fenceInset;
+                const bottomY = CANVAS_H - fenceInset;
+                const leftX = fenceInset;
+                const rightX = CANVAS_W - fenceInset;
+
+                // Posts
+                ctx.fillStyle = '#8B5E3C';
+                for (let x = leftX; x <= rightX; x += 72) {
+                    ctx.fillRect(x - postW / 2, topY - postH / 2, postW, postH);
+                    ctx.fillRect(x - postW / 2, bottomY - postH / 2, postW, postH);
+                }
+                for (let y = topY + 72; y <= bottomY - 72; y += 72) {
+                    ctx.fillRect(leftX - postH / 2, y - postW / 2, postH, postW);
+                    ctx.fillRect(rightX - postH / 2, y - postW / 2, postH, postW);
+                }
+                // Corner posts
+                ctx.fillRect(leftX - postH / 2, topY - postH / 2, postH, postH);
+                ctx.fillRect(rightX - postH / 2, topY - postH / 2, postH, postH);
+                ctx.fillRect(leftX - postH / 2, bottomY - postH / 2, postH, postH);
+                ctx.fillRect(rightX - postH / 2, bottomY - postH / 2, postH, postH);
+
+                // Rails
+                ctx.fillStyle = '#A0724A';
+                ctx.fillRect(leftX, topY - railThick / 2, rightX - leftX, railThick);
+                ctx.fillRect(leftX, bottomY - railThick / 2, rightX - leftX, railThick);
+                ctx.fillRect(leftX - railThick / 2, topY, railThick, bottomY - topY);
+                ctx.fillRect(rightX - railThick / 2, topY, railThick, bottomY - topY);
+
+                // Post caps
+                ctx.fillStyle = '#6B3F2A';
+                for (let x = leftX; x <= rightX; x += 72) {
+                    ctx.fillRect(x - postW / 2 - 2, topY - postH / 2 - 3, postW + 4, 5);
+                    ctx.fillRect(x - postW / 2 - 2, bottomY - postH / 2 - 3, postW + 4, 5);
+                }
+            }
+
+            function drawPlayer(px, py) {
+                ctx.save();
+                // Shadow
+                ctx.fillStyle = 'rgba(0,0,0,0.25)';
+                ctx.beginPath();
+                ctx.ellipse(px, py + 2, player.radius * 0.9, player.radius * 0.35, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Body (overalls)
+                const bodyGrad = ctx.createRadialGradient(px - 3, py - 3, 2, px, py, player.radius);
+                bodyGrad.addColorStop(0, '#6D9B4A');
+                bodyGrad.addColorStop(0.7, '#4A7C3F');
+                bodyGrad.addColorStop(1, '#3A5C2F');
+                ctx.fillStyle = bodyGrad;
+                ctx.beginPath();
+                ctx.arc(px, py, player.radius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = '#2E4A22';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                // Overalls straps
+                ctx.fillStyle = '#3A5C2F';
+                ctx.fillRect(px - 6, py - player.radius + 2, 4, player.radius * 0.7);
+                ctx.fillRect(px + 2, py - player.radius + 2, 4, player.radius * 0.7);
+
+                // Head
+                const headY = py - player.radius - 3;
+                const headR = player.radius * 0.6;
+                const headGrad = ctx.createRadialGradient(px - 1, headY - 1, 1, px, headY, headR);
+                headGrad.addColorStop(0, '#FFE0C8');
+                headGrad.addColorStop(1, '#E8C0A0');
+                ctx.fillStyle = headGrad;
+                ctx.beginPath();
+                ctx.arc(px, headY, headR, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = '#C89878';
+                ctx.lineWidth = 1.5;
+                ctx.stroke();
+
+                // Eyes
+                const eyeY = headY - 2;
+                ctx.fillStyle = '#333';
+                ctx.beginPath();
+                ctx.arc(px - 4, eyeY, 2.5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(px + 4, eyeY, 2.5, 0, Math.PI * 2);
+                ctx.fill();
+                // Eye highlights
+                ctx.fillStyle = '#FFF';
+                ctx.beginPath();
+                ctx.arc(px - 3, eyeY - 1.5, 1, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(px + 5, eyeY - 1.5, 1, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Smile
+                ctx.strokeStyle = '#8B5E5E';
+                ctx.lineWidth = 1.2;
+                ctx.beginPath();
+                ctx.arc(px, eyeY + 3, 5, 0.2, Math.PI - 0.2);
+                ctx.stroke();
+
+                // Hat
+                const hatY = headY - headR - 1;
+                ctx.fillStyle = '#C8A060';
+                ctx.beginPath();
+                ctx.ellipse(px, hatY + 1, headR * 1.5, headR * 0.45, 0, Math.PI, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#A07840';
+                ctx.fillRect(px - headR * 0.7, hatY - headR * 0.55, headR * 1.4, headR * 0.7);
+                ctx.fillStyle = '#C8A060';
+                ctx.fillRect(px - headR * 0.7, hatY - headR * 0.55, headR * 1.4, headR * 0.2);
+                ctx.strokeStyle = '#7A5028';
+                ctx.lineWidth = 1.5;
+                ctx.strokeRect(px - headR * 0.7, hatY - headR * 0.55, headR * 1.4, headR * 0.7);
+
+                // Boost indicator
+                if (dogPetBoostTimer > 0 && gameState === 'playing') {
+                    const boostAlpha = 0.5 + Math.sin(elapsedTotal * 8) * 0.4;
+                    ctx.fillStyle = 'rgba(255,200,60,' + boostAlpha + ')';
+                    ctx.font = 'bold 13px "Segoe UI", system-ui, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('⚡BOOST⚡', px, py - player.radius - 22);
+                }
+
+                ctx.restore();
+            }
+
+            function drawDog(dx, dy) {
+                ctx.save();
+                // Shadow
+                ctx.fillStyle = 'rgba(0,0,0,0.25)';
+                ctx.beginPath();
+                ctx.ellipse(dx, dy + 2, dog.radius * 0.85, dog.radius * 0.3, 0, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Body
+                const bodyGrad = ctx.createRadialGradient(dx - 2, dy - 2, 2, dx, dy, dog.radius);
+                bodyGrad.addColorStop(0, '#C89860');
+                bodyGrad.addColorStop(0.7, '#A07040');
+                bodyGrad.addColorStop(1, '#6B3F20');
+                ctx.fillStyle = bodyGrad;
+                ctx.beginPath();
+                ctx.arc(dx, dy, dog.radius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = '#5A3020';
+                ctx.lineWidth = 1.8;
+                ctx.stroke();
+
+                // Ears
+                ctx.fillStyle = '#8B5530';
+                ctx.beginPath();
+                ctx.ellipse(dx - dog.radius * 0.55, dy - dog.radius * 0.7, dog.radius * 0.35, dog.radius * 0.55, -0.5, 0, Math
+                    .PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.ellipse(dx + dog.radius * 0.55, dy - dog.radius * 0.7, dog.radius * 0.35, dog.radius * 0.55, 0.5, 0, Math
+                    .PI * 2);
+                ctx.fill();
+                ctx.strokeStyle = '#5A3020';
+                ctx.lineWidth = 1.2;
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.ellipse(dx - dog.radius * 0.55, dy - dog.radius * 0.7, dog.radius * 0.35, dog.radius * 0.55, -0.5, 0, Math
+                    .PI * 2);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.ellipse(dx + dog.radius * 0.55, dy - dog.radius * 0.7, dog.radius * 0.35, dog.radius * 0.55, 0.5, 0, Math
+                    .PI * 2);
+                ctx.stroke();
+
+                // Eyes
+                const eyeY = dy - dog.radius * 0.2;
+                ctx.fillStyle = '#FFF';
+                ctx.beginPath();
+                ctx.arc(dx - 4, eyeY, 4, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(dx + 4, eyeY, 4, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#1A1A1A';
+                ctx.beginPath();
+                ctx.arc(dx - 3.5, eyeY, 2.2, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.beginPath();
+                ctx.arc(dx + 4.5, eyeY, 2.2, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Nose
+                ctx.fillStyle = '#2A1A10';
+                ctx.beginPath();
+                ctx.arc(dx, dy + dog.radius * 0.3, 3.5, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Tongue (if sniffing or happy)
+                if (dogIsSniffing || dogPetBoostTimer > 0) {
+                    ctx.fillStyle = '#E87080';
+                    ctx.beginPath();
+                    ctx.arc(dx, dy + dog.radius * 0.45, 3, 0, Math.PI);
+                    ctx.fill();
+                }
+
+                // Tail
+                const tailBaseX = dx - dog.radius * 0.6;
+                const tailBaseY = dy - dog.radius * 0.3;
+                const tailWag = Math.sin(elapsedTotal * 7) * 0.5;
+                ctx.strokeStyle = '#A07040';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.moveTo(tailBaseX, tailBaseY);
+                ctx.quadraticCurveTo(tailBaseX - 12, tailBaseY - 14 + tailWag * 8, tailBaseX - 8, tailBaseY - 18 + tailWag *
+                    10);
+                ctx.stroke();
+                ctx.strokeStyle = '#C89860';
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.moveTo(tailBaseX, tailBaseY);
+                ctx.quadraticCurveTo(tailBaseX - 10, tailBaseY - 12 + tailWag * 6, tailBaseX - 7, tailBaseY - 16 + tailWag *
+                    8);
+                ctx.stroke();
+
+                // Pet cooldown indicator
+                if (dogPetCooldown > 0 && gameState === 'playing') {
+                    const cdAlpha = 0.4;
+                    ctx.fillStyle = 'rgba(150,150,150,' + cdAlpha + ')';
+                    ctx.font = 'bold 10px "Segoe UI", system-ui, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('Pet: ' + Math.ceil(dogPetCooldown) + 's', dx, dy - dog.radius - 14);
+                } else if (dogPetCooldown <= 0 && gameState === 'playing') {
+                    const readyAlpha = 0.5 + Math.sin(elapsedTotal * 2.5) * 0.3;
+                    ctx.fillStyle = 'rgba(255,220,180,' + readyAlpha + ')';
+                    ctx.font = 'bold 10px "Segoe UI", system-ui, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('Pet me! (E)', dx, dy - dog.radius - 14);
+                }
+
+                ctx.restore();
+            }
+
+            function drawHUD() {
+                // HUD background
+                const hudX = 14;
+                const hudY = 14;
+                const hudW = 195;
+                const hudH = dogPetBoostTimer > 0 ? 108 : 88;
+                ctx.fillStyle = 'rgba(20,20,30,0.78)';
+                ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.roundRect(hudX, hudY, hudW, hudH, 12);
+                ctx.fill();
+                ctx.stroke();
+
+                ctx.textAlign = 'left';
+                const textX = hudX + 14;
+                let textY = hudY + 24;
+
+                // Crops
+                ctx.fillStyle = '#FFFFFF';
+                ctx.font = 'bold 16px "Segoe UI", system-ui, sans-serif';
+                ctx.fillText('🌾 Crops: ' + cropsRemaining + ' / 10', textX, textY);
+                textY += 24;
+
+                // Time
+                const timeInt = Math.ceil(timeLeft);
+                const timeColor = timeLeft <= 10 ?
+                    'rgba(255,80,80,' + (0.8 + Math.sin(elapsedTotal * 8) * 0.2) + ')' :
+                    '#FFFFFF';
+                ctx.fillStyle = timeColor;
+                ctx.fillText('⏱ Time: ' + timeInt + 's', textX, textY);
+                textY += 26;
+
+                // Stamina bar
+                const barW = 150;
+                const barH = 14;
+                const barX = textX;
+                const barY = textY;
+                ctx.fillStyle = 'rgba(40,40,50,0.8)';
+                ctx.fillRect(barX, barY, barW, barH);
+                const staminaPct = stamina / STAMINA_MAX;
+                let staminaColor;
+                if (staminaPct > 0.5) staminaColor = '#5EC85E';
+                else if (staminaPct > 0.2) staminaColor = '#E8C840';
+                else staminaColor = '#E85050';
+                const grad = ctx.createLinearGradient(barX, barY, barX, barY + barH);
+                grad.addColorStop(0, staminaColor);
+                grad.addColorStop(1, staminaColor.replace(')', ', 0.7)').replace('rgb', 'rgba'));
+                if (staminaColor.startsWith('#')) {
+                    const r = parseInt(staminaColor.slice(1, 3), 16);
+                    const g = parseInt(staminaColor.slice(3, 5), 16);
+                    const b = parseInt(staminaColor.slice(5, 7), 16);
+                    ctx.fillStyle = 'rgba(' + r + ',' + g + ',' + b + ',0.9)';
+                }
+                ctx.fillRect(barX, barY, barW * staminaPct, barH);
+                ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+                ctx.lineWidth = 1;
+                ctx.strokeRect(barX, barY, barW, barH);
+                ctx.fillStyle = '#FFF';
+                ctx.font = 'bold 9px "Segoe UI", system-ui, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.fillText('STAMINA', barX + barW / 2, barY + barH / 2 + 3);
+                ctx.textAlign = 'left';
+                textY += 20;
+
+                // Boost indicator
+                if (dogPetBoostTimer > 0) {
+                    ctx.fillStyle = '#FFC840';
+                    ctx.font = 'bold 12px "Segoe UI", system-ui, sans-serif';
+                    ctx.fillText('⚡ Boost: ' + dogPetBoostTimer.toFixed(1) + 's', textX, textY + 2);
+                }
+            }
+
+            // ─────────────────────────────────────
+            // GAME LOOP
+            // ─────────────────────────────────────
+            function gameLoop(timestamp) {
+                if (lastTime === null) {
+                    lastTime = timestamp;
+                }
+                let dt = (timestamp - lastTime) / 1000;
+                if (dt <= 0) dt = 0.016;
+                if (dt > 0.2) dt = 0.2; // Cap to prevent large jumps
+                lastTime = timestamp;
+                elapsedTotal += dt;
+
+                update(dt);
+                render();
+
+                requestAnimationFrame(gameLoop);
+            }
+
+            // ─────────────────────────────────────
+            // POLYFILL roundRect (for older browsers)
+            // ─────────────────────────────────────
+            if (!ctx.roundRect) {
+                ctx.roundRect = function(x, y, w, h, r) {
+                    if (typeof r === 'number') r = { tl: r, tr: r, br: r, bl: r };
+                    ctx.beginPath();
+                    ctx.moveTo(x + r.tl, y);
+                    ctx.lineTo(x + w - r.tr, y);
+                    ctx.quadraticCurveTo(x + w, y, x + w, y + r.tr);
+                    ctx.lineTo(x + w, y + h - r.br);
+                    ctx.quadraticCurveTo(x + w, y + h, x + w - r.br, y + h);
+                    ctx.lineTo(x + r.bl, y + h);
+                    ctx.quadraticCurveTo(x, y + h, x, y + h - r.bl);
+                    ctx.lineTo(x, y + r.tl);
+                    ctx.quadraticCurveTo(x, y, x + r.tl, y);
+                    ctx.closePath();
+                };
+            }
+
+            // ─────────────────────────────────────
+            // START
+            // ─────────────────────────────────────
+            init();
+            lastTime = performance.now();
+            requestAnimationFrame(gameLoop);
+
+            console.log('🌾 Harvest Rush ready!');
+            console.log('  Move: WASD / Arrow keys');
+            console.log('  Harvest: Space (near crops)');
+            console.log('  Sprint: Hold Shift');
+            console.log('  Pet dog: E (near dog, gives speed boost)');
+            console.log('  Golden crop: ⭐ gives +5 seconds!');
+            console.log('  Restart: R after game ends');
+        })();
+    </script>
+</body>
+</html>
