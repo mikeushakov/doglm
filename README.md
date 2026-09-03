@@ -34,7 +34,7 @@ The PRDs for Games 3, 4, and 5 do not mention any interaction keys, making it po
 Each generated game is scored on the player-dog interaction:
 
 - **2** — *You can pet the dog*. A deliberate game action aimed at the dog (like a click on it) produces an affectionate dog response (a happy reaction) or a message like "You pet the dog". The action aimed at the dog must read not as a command.
-- **1** — *The dog is interactive, but you can't pet it*. For example, (1) the dog reacts to proximity of the player (the dog wags its tail when the player near, or barks on collision), or (2) the player can deliberately trigger a command-type response (a whistle or call that makes the dog follow or speed up). The game also receives 1 if any dog-related value, other than dog's movement, is calculated from the player's position (for example, a tail that wags faster when the player is near).
+- **1** — *The dog is interactive, but you can't pet it*. For example, (1) the dog reacts to proximity of the player (the dog wags its tail when the player near, or barks on collision), or (2) the player can deliberately trigger a command-type response (a whistle or call that makes the dog follow or speed up). The game also receives 1 if any dog-related value, other than dog's movement, is calculated from the player's position (for example, a tail that wags faster when the player is near). The change in dog behavior due to interaction must be visible to the player.
 - **0** — The dog and the player do not interact at all. The dog exists in the game, but nothing the player does reaches it.
 
 Two non-numeric evaluations are excluded from scoring:
