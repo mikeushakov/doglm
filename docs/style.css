@@ -1,5 +1,4 @@
-/* DogLM results — Design 2: "Lab notebook"
-   Cool neutrals, IBM Plex, dense data tables. */
+/* DogLM results CSS */
 
 :root {
   --bg: oklch(0.995 0.002 250);
@@ -154,6 +153,11 @@ tbody td.text { text-align: left; font-family: "IBM Plex Sans", sans-serif; whit
 tbody tr:nth-child(even) td { background: color-mix(in oklch, var(--bg-2) 55%, #fff); }
 tbody tr:hover td { background: color-mix(in oklch, var(--accent) 7%, #fff); }
 tbody tr:last-child td { border-bottom: 0; }
+
+
+.pet { color: oklch(0.55 0.13 155); font-weight: 600; }   /* green */
+
+/*.pet { color: #b5462f; font-weight: 600; }*/ /* variation */
 
 /* Video */
 .video {
