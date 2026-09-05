@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Gem Maze</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    background: #090e19;
+    color: #edf5ff;
+    font-family: system-ui, sans-serif;
+  }
+  canvas {
+    display: block;
+    width: min(800px, 100vw);
+    height: auto;
+    background: #111a2a;
+    border-radius: 16px;
+    box-shadow: 0 24px 90px #0008, 0 0 0 1px #ffffff12;
+    outline: none;
+  }
+</style>
+</head>
+<body>
+<canvas id="game" width="800" height="600" tabindex="0"
+  aria-label="Gem Maze. Move with WASD or arrows. Collect five gems and reach the exit. Hold Space for a guiding trail. Press E on a portal or near the dog."></canvas>
+<script>
+"use strict";
+
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+const TILE = 32, COLS = 21, ROWS = 15, OX = 64, OY = 88;
+const TOTAL = 5;
+const colors = {
+  floor: "#152237", wall: "#2a3c55", edge: "#3c5270",
+  mint: "#7bf0ca", gold: "#ffd17a", purple: "#b59aff",
+  text: "#edf5ff", muted: "#92a6c2"
+};
+const center = (c, r) => ({
+  x: OX + c * TILE + TILE / 2,
+  y: OY + r * TILE + TILE / 2
+});
+const gate = { c: 11, r: 0 };
+const gatePoint = center(gate.c, gate.r);
+const pads = [center(3, 11), center(17, 3)];
+const directions = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+const keys = new Set();
+
+// A fixed maze, carved from fixed axis-aligned corridor routes.
+const maze = Array.from({ length: ROWS }, () => Array(COLS).fill(1));
+const routes = [
+  [[1,13],[1,9],[5,9],[5,5],[1,5],[1,1],[9,1],[9,3],
+   [13,3],[13,1],[19,1],[19,5],[15,5],[15,9],[19,9],
+   [19,13],[11,13],[11,9],[9,9],[9,7]],
+  [[11,3],[11,0]],
+  [[1,13],[7,13],[7,11],[3,11]],
+  [[5,7],[3,7]],
+  [[5,5],[7,5],[7,3],[3,3]],
+  [[9,7],[13,7],[13,5],[11,5]],
+  [[15,7],[17,7]],
+  [[15,13],[15,11],[17,11]],
+  [[9,9],[9,11]],
+  [[19,3],[15,3]],
+  [[1,5],[1,7]],
+  [[5,9],[7,9],[7,7],[9,7]]
+];
+for (const route of routes) {
+  for (let i = 1; i < route.length; i++) {
+    let [c, r] = route[i - 1];
+    const [endC, endR] = route[i];
+    const dc = Math.sign(endC - c), dr = Math.sign(endR - r);
+    maze[r][c] = 0;
+    while (c !== endC || r !== endR) {
+      c += dc;
+      r += dr;
+      maze[r][c] = 0;
+    }
+  }
+}
+
+let player, dog, gems, collected, won, effects, notice, noticeLife;
+let elapsed = 0;
+
+function reset() {
+  player = { ...center(1, 13), radius: 10, facingX: 0, facingY: -1 };
+  dog = {
+    ...center(5, 9), c: 5, r: 9,
+    target: null, previous: null, petCooldown: 0
+  };
+  gems = [[3,3],[7,13],[13,5],[17,7],[17,13]].map(([c, r]) => ({
+    c, r, ...center(c, r), taken: false
+  }));
+  collected = 0;
+  won = false;
+  effects = [];
+  notice = "";
+  noticeLife = 0;
+  elapsed = 0;
+  keys.clear();
+}
+
+function walkable(c, r) {
+  return c >= 0 && r >= 0 && c < COLS && r < ROWS &&
+    maze[r][c] === 0 &&
+    !(c === gate.c && r === gate.r && collected < TOTAL);
+}
+
+function announce(text) {
+  notice = text;
+  noticeLife = 3;
+}
+
+function popup(x, y, text, color) {
+  effects.push({ x, y, text, color, life: 1.1, max: 1.1 });
+}
+
+function sparkles(x, y, color) {
+  for (let i = 0; i < 10; i++) {
+    const angle = i * Math.PI / 5;
+    effects.push({
+      x, y, vx: Math.cos(angle) * 45, vy: Math.sin(angle) * 45,
+      color, life: 0.55, max: 0.55
+    });
+  }
+}
+
+function interact() {
+  if (won) return;
+  const index = pads.findIndex(p => Math.hypot(player.x - p.x, player.y - p.y) < 21);
+  if (index !== -1) {
+    sparkles(player.x, player.y, colors.purple);
+    Object.assign(player, pads[1 - index]);
+    sparkles(player.x, player.y, colors.purple);
+    popup(player.x, player.y - 12, "WHOOSH", colors.purple);
+    announce("A little shortcut. Portals work both ways!");
+    return;
+  }
+  if (Math.hypot(player.x - dog.x, player.y - dog.y) < 44 && dog.petCooldown <= 0) {
+    dog.petCooldown = 1.6;
+    popup(dog.x, dog.y - 13, "♥", "#ff9cb7");
+    announce("You made a friend. The dog is just here to wander.");
+  }
+}
+
+window.addEventListener("keydown", e => {
+  const key = e.key.toLowerCase();
+  if (["arrowup","arrowdown","arrowleft","arrowright"," ","w","a","s","d","e","r"].includes(key)) {
+    e.preventDefault();
+  }
+  if (key === "r" && won) {
+    reset();
+    return;
+  }
+  keys.add(key);
+  if (key === "e" && !e.repeat) interact();
+});
+window.addEventListener("keyup", e => keys.delete(e.key.toLowerCase()));
+window.addEventListener("blur", () => keys.clear());
+canvas.addEventListener("pointerdown", () => canvas.focus());
+
+function collides(x, y) {
+  const radius = player.radius;
+  if (x - radius < 0 || x + radius > 800 || y - radius < 0 || y + radius > 600) return true;
+  const minC = Math.floor((x - radius - OX) / TILE);
+  const maxC = Math.floor((x + radius - OX) / TILE);
+  const minR = Math.floor((y - radius - OY) / TILE);
+  const maxR = Math.floor((y + radius - OY) / TILE);
+  for (let r = minR; r <= maxR; r++) {
+    for (let c = minC; c <= maxC; c++) {
+      if (walkable(c, r)) continue;
+      const left = OX + c * TILE, top = OY + r * TILE;
+      const nearX = Math.max(left, Math.min(x, left + TILE));
+      const nearY = Math.max(top, Math.min(y, top + TILE));
+      if ((x - nearX) ** 2 + (y - nearY) ** 2 < radius ** 2) return true;
+    }
+  }
+  return false;
+}
+
+function updateDog(dt) {
+  dog.petCooldown = Math.max(0, dog.petCooldown - dt);
+  if (dog.petCooldown > 0) return;
+  if (!dog.target) {
+    let choices = directions.map(([dc, dr]) => ({ c: dog.c + dc, r: dog.r + dr }))
+      .filter(p => walkable(p.c, p.r) && p.r !== 0);
+    const forward = choices.filter(p =>
+      !dog.previous || p.c !== dog.previous.c || p.r !== dog.previous.r);
+    if (forward.length) choices = forward;
+    if (!choices.length) return;
+    const next = choices[Math.floor(Math.random() * choices.length)];
+    dog.target = { ...next, ...center(next.c, next.r) };
+  }
+  const dx = dog.target.x - dog.x, dy = dog.target.y - dog.y;
+  const distance = Math.hypot(dx, dy), step = 39 * dt;
+  if (distance <= step) {
+    dog.previous = { c: dog.c, r: dog.r };
+    Object.assign(dog, dog.target);
+    dog.target = null;
+  } else {
+    dog.x += dx / distance * step;
+    dog.y += dy / distance * step;
+  }
+}
+
+function update(dt) {
+  if (won) return;
+  elapsed += dt;
+  noticeLife = Math.max(0, noticeLife - dt);
+  let dx = Number(keys.has("d") || keys.has("arrowright")) -
+           Number(keys.has("a") || keys.has("arrowleft"));
+  let dy = Number(keys.has("s") || keys.has("arrowdown")) -
+           Number(keys.has("w") || keys.has("arrowup"));
+  const length = Math.hypot(dx, dy);
+  if (length) {
+    dx /= length;
+    dy /= length;
+    player.facingX = dx;
+    player.facingY = dy;
+    const step = 140 * dt;
+    if (!collides(player.x + dx * step, player.y)) player.x += dx * step;
+    if (!collides(player.x, player.y + dy * step)) player.y += dy * step;
+  }
+
+  for (const gem of gems) {
+    if (!gem.taken && Math.hypot(player.x - gem.x, player.y - gem.y) <= player.radius + 8) {
+      gem.taken = true;
+      collected++;
+      sparkles(gem.x, gem.y, colors.gold);
+      popup(gem.x, gem.y - 10, "+1 GEM", colors.gold);
+      if (collected === TOTAL) announce("All five! The mint exit at the top is open.");
+    }
+  }
+
+  const nearestX = Math.max(gatePoint.x - 16, Math.min(player.x, gatePoint.x + 16));
+  const nearestY = Math.max(gatePoint.y - 16, Math.min(player.y, gatePoint.y + 16));
+  if (collected === TOTAL &&
+      Math.hypot(player.x - nearestX, player.y - nearestY) < player.radius) {
+    won = true;
+    keys.clear();
+    return;
+  }
+
+  updateDog(dt);
+  for (const effect of effects) {
+    effect.life -= dt;
+    if (effect.text) effect.y -= 23 * dt;
+    else {
+      effect.x += effect.vx * dt;
+      effect.y += effect.vy * dt;
+    }
+  }
+  effects = effects.filter(effect => effect.life > 0);
+}
+
+// Optional assistance: a shortest corridor trail to the nearest remaining gem.
+function guidePath() {
+  const c = Math.floor((player.x - OX) / TILE);
+  const r = Math.floor((player.y - OY) / TILE);
+  const start = r * COLS + c;
+  const queue = [start], parents = new Map([[start, null]]);
+  const goals = new Set(collected === TOTAL
+    ? [gate.r * COLS + gate.c]
+    : gems.filter(g => !g.taken).map(g => g.r * COLS + g.c));
+  for (let i = 0; i < queue.length; i++) {
+    const current = queue[i];
+    if (goals.has(current)) {
+      const result = [];
+      for (let id = current; id !== null; id = parents.get(id)) {
+        result.push(center(id % COLS, Math.floor(id / COLS)));
+      }
+      return result.reverse();
+    }
+    const cc = current % COLS, rr = Math.floor(current / COLS);
+    for (const [dc, dr] of directions) {
+      const nc = cc + dc, nr = rr + dr, id = nr * COLS + nc;
+      if (walkable(nc, nr) && !parents.has(id)) {
+        parents.set(id, current);
+        queue.push(id);
+      }
+    }
+  }
+  return [];
+}
+
+function rounded(x, y, w, h, radius, fill, stroke) {
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, radius);
+  if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+  if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = 1; ctx.stroke(); }
+}
+
+function text(value, x, y, size = 12, color = colors.text, align = "left", weight = 500) {
+  ctx.font = `${weight} ${size}px system-ui, sans-serif`;
+  ctx.textAlign = align;
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = color;
+  ctx.fillText(value, x, y);
+}
+
+function circle(x, y, radius, color) {
+  ctx.beginPath();
+  ctx.arc(x, y, radius, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.fill();
+}
+
+function diamond(x, y, size, color) {
+  ctx.beginPath();
+  ctx.moveTo(x, y - size);
+  ctx.lineTo(x + size * 0.75, y);
+  ctx.lineTo(x, y + size);
+  ctx.lineTo(x - size * 0.75, y);
+  ctx.closePath();
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(x, y - size + 2);
+  ctx.lineTo(x - size * 0.5, y);
+  ctx.lineTo(x, y + 2);
+  ctx.closePath();
+  ctx.fillStyle = "#ffffff65";
+  ctx.fill();
+}
+
+function drawDog() {
+  const { x, y } = dog;
+  circle(x, y + 6, 10, "#0004");
+  rounded(x - 7, y - 3, 14, 14, 5, "#b77b49");
+  circle(x, y - 4, 9, "#e5b477");
+  rounded(x - 11, y - 11, 5, 13, 3, "#855436");
+  rounded(x + 6, y - 11, 5, 13, 3, "#855436");
+  circle(x - 3, y - 5, 1.4, "#302c30");
+  circle(x + 3, y - 5, 1.4, "#302c30");
+  circle(x, y, 3.5, "#ffe1ac");
+  circle(x, y - 1, 1.8, "#302c30");
+  rounded(x - 6, y + 5, 12, 3, 1, colors.purple);
+}
+
+function draw() {
+  ctx.clearRect(0, 0, 800, 600);
+  ctx.fillStyle = "#111a2a";
+  ctx.fillRect(0, 0, 800, 600);
+
+  diamond(37, 31, 11, colors.gold);
+  text("GEM MAZE", 58, 31, 23, colors.text, "left", 800);
+  text("Gather five gems. Find your way out.", 25, 59, 12, colors.muted);
+
+  rounded(317, 19, 206, 47, 12, "#1a2940", "#31425d");
+  text(`Gems: ${collected} / ${TOTAL}`, 333, 43, 15, colors.text, "left", 700);
+  for (let i = 0; i < TOTAL; i++) {
+    diamond(435 + i * 17, 43, 7, i < collected ? colors.gold : "#40516a");
+  }
+
+  circle(563, 32, 4, collected === TOTAL ? colors.mint : colors.purple);
+  text(collected === TOTAL ? "EXIT OPEN" : "EXIT LOCKED", 576, 32, 12,
+       collected === TOTAL ? colors.mint : colors.purple, "left", 750);
+  text("No rush. Explore a little.", 559, 55, 11, colors.muted);
+
+  rounded(OX - 7, OY - 7, COLS * TILE + 14, ROWS * TILE + 14, 10, "#0c1422", "#28394f");
+  ctx.fillStyle = colors.floor;
+  ctx.fillRect(OX, OY, COLS * TILE, ROWS * TILE);
+
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const x = OX + c * TILE, y = OY + r * TILE;
+      if (maze[r][c]) {
+        rounded(x + 1, y + 1, TILE - 2, TILE - 2, 4, colors.wall);
+        ctx.fillStyle = colors.edge;
+        ctx.fillRect(x + 5, y + 3, TILE - 10, 1);
+      } else {
+        if ((c + r) % 2 === 0) {
+          ctx.fillStyle = "#19283d";
+          ctx.fillRect(x, y, TILE, TILE);
+        }
+        circle(x + 16, y + 16, 1, "#34445b");
+      }
+    }
+  }
+
+  const open = collected === TOTAL;
+  rounded(gatePoint.x - 15, gatePoint.y - 15, 30, 30, 5,
+          open ? "#214b47" : "#42314f", open ? colors.mint : colors.purple);
+  if (open) {
+    text("↑", gatePoint.x, gatePoint.y - 1, 26, colors.mint, "center", 800);
+  } else {
+    for (let i = -8; i <= 8; i += 8) {
+      rounded(gatePoint.x + i - 2, gatePoint.y - 11, 4, 22, 1, colors.purple);
+    }
+    rounded(gatePoint.x - 6, gatePoint.y - 4, 12, 9, 2, "#edd9ff");
+    circle(gatePoint.x, gatePoint.y, 1.5, "#42314f");
+  }
+
+  for (let i = 0; i < pads.length; i++) {
+    const pad = pads[i];
+    circle(pad.x, pad.y, 12, "#b59aff20");
+    ctx.strokeStyle = colors.purple;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(pad.x, pad.y, 10 + Math.sin(elapsed * 3) * 1.2, 0, Math.PI * 2);
+    ctx.stroke();
+    text(i === 0 ? "A" : "B", pad.x, pad.y, 10, colors.purple, "center", 800);
+  }
+
+  if (keys.has(" ") && !won) {
+    const path = guidePath();
+    if (path.length) {
+      ctx.save();
+      ctx.strokeStyle = "#7bf0ca99";
+      ctx.lineWidth = 3;
+      ctx.lineCap = "round";
+      ctx.setLineDash([2, 7]);
+      ctx.lineDashOffset = -elapsed * 18;
+      ctx.beginPath();
+      ctx.moveTo(player.x, player.y);
+      for (const point of path) ctx.lineTo(point.x, point.y);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  for (const gem of gems) {
+    if (gem.taken) continue;
+    circle(gem.x, gem.y, 13, "#ffd17a12");
+    diamond(gem.x, gem.y, 9 + Math.sin(elapsed * 3 + gem.c) * 0.7, colors.gold);
+  }
+
+  drawDog();
+  circle(player.x, player.y + 5, 11, "#0005");
+  circle(player.x, player.y, player.radius, colors.mint);
+  circle(player.x - 3, player.y - 4, 3, "#caffed");
+  const eyeX = player.facingX * 2, eyeY = player.facingY * 2;
+  circle(player.x - 3 + eyeX, player.y + eyeY, 1.6, "#153f3a");
+  circle(player.x + 3 + eyeX, player.y + eyeY, 1.6, "#153f3a");
+
+  for (const effect of effects) {
+    ctx.globalAlpha = Math.max(0, effect.life / effect.max);
+    if (effect.text) text(effect.text, effect.x, effect.y, 12, effect.color, "center", 800);
+    else diamond(effect.x, effect.y, 3, effect.color);
+  }
+  ctx.globalAlpha = 1;
+
+  if (!won && noticeLife <= 0) {
+    let prompt = "";
+    if (pads.some(p => Math.hypot(player.x - p.x, player.y - p.y) < 21)) prompt = "E · use portal";
+    else if (Math.hypot(player.x - dog.x, player.y - dog.y) < 44) prompt = "E · pet dog";
+    if (prompt) {
+      const px = Math.max(130, Math.min(670, player.x));
+      rounded(px - 61, player.y - 37, 122, 23, 7, "#0b1225ed", "#536780");
+      text(prompt, px, player.y - 25, 11, colors.text, "center");
+    }
+  }
+
+  if (noticeLife > 0 && !won) {
+    ctx.font = "500 12px system-ui, sans-serif";
+    const width = ctx.measureText(notice).width + 30;
+    rounded(400 - width / 2, 80, width, 28, 9, "#0b1427f5", "#56718c");
+    text(notice, 400, 94, 12, colors.mint, "center");
+  }
+
+  text("WASD / ↑↓←→  Move", 64, 587, 11, colors.muted);
+  text("Hold SPACE  Guiding trail", 288, 587, 11, colors.muted);
+  text("E  Use portal / pet dog", 566, 587, 11, colors.muted);
+
+  if (won) {
+    ctx.fillStyle = "#070f1bdc";
+    ctx.fillRect(0, 0, 800, 600);
+    rounded(170, 177, 460, 246, 22, "#18273b", "#456779");
+    for (let i = 0; i < TOTAL; i++) diamond(336 + i * 32, 224, 10, colors.gold);
+    text("You escaped the maze!", 400, 276, 29, colors.text, "center", 800);
+    text("Five gems found. One lovely little adventure.", 400, 315, 14, colors.muted, "center");
+    rounded(306, 353, 188, 40, 10, colors.mint);
+    text("Press R to restart", 400, 374, 14, "#133d35", "center", 800);
+  }
+}
+
+reset();
+let previousTime = null;
+function frame(now) {
+  const dt = previousTime === null ? 0 : Math.min((now - previousTime) / 1000, 0.033);
+  previousTime = now;
+  update(dt);
+  draw();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

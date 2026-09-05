@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Firefly Meadow</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    background: #131e25;
+    color: #edf0d6;
+    font-family: system-ui, sans-serif;
+  }
+  canvas {
+    display: block;
+    width: min(800px, 100vw);
+    height: auto;
+    border-radius: 16px;
+    box-shadow: 0 24px 80px #0006, 0 0 0 1px #ffffff12;
+  }
+</style>
+</head>
+<body>
+<canvas id="game" width="800" height="600" aria-label="Firefly Meadow. Move with WASD or arrow keys. Catch eight fireflies by touching them. Space reveals the nearest firefly. E pets the nearby dog, who will follow you."></canvas>
+<script>
+"use strict";
+
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+const W = 800, H = 600, TOTAL = 8;
+const keys = new Set();
+let player, dog, flies, effects, caught, won, time, pulse, notice, noticeLife;
+
+// Seeded decorations keep the same little meadow on every visit.
+let seed = 41;
+function random() {
+  seed = (seed * 1664525 + 1013904223) >>> 0;
+  return seed / 4294967296;
+}
+const grass = Array.from({length: 160}, () => ({
+  x: 15 + random() * 770, y: 104 + random() * 464,
+  size: 3 + random() * 6, color: random() > 0.5 ? "#526c5c" : "#304e48"
+}));
+const flowers = Array.from({length: 28}, () => ({
+  x: 30 + random() * 740, y: 125 + random() * 410,
+  color: ["#ba9aaf", "#c4b993", "#9faebe"][Math.floor(random() * 3)]
+}));
+const locations = [
+  [112, 172], [316, 169], [525, 155], [694, 207],
+  [188, 316], [430, 319], [650, 380], [297, 466]
+];
+
+function positionFly(f) {
+  f.x = f.homeX + Math.sin(time * 0.28 + f.phase) * 32;
+  f.y = f.homeY + Math.sin(time * 0.23 + f.phase * 1.7) * 25;
+}
+
+function reset() {
+  time = 0;
+  caught = 0;
+  won = false;
+  pulse = 0;
+  notice = "";
+  noticeLife = 0;
+  keys.clear();
+  player = {x: 400, y: 510, r: 13, moving: false, facing: 1};
+  dog = {x: 580, y: 442, friend: false, facing: 1, moving: false};
+  effects = [];
+  flies = locations.map(([x, y], i) => {
+    const f = {homeX: x, homeY: y, phase: i * 1.91, caught: false};
+    positionFly(f);
+    return f;
+  });
+}
+
+function message(text) {
+  notice = text;
+  noticeLife = 3;
+}
+
+window.addEventListener("keydown", e => {
+  const key = e.key.toLowerCase();
+  if (["arrowup", "arrowdown", "arrowleft", "arrowright", " ", "w", "a", "s", "d"].includes(key)) {
+    e.preventDefault();
+  }
+  keys.add(key);
+  if (e.repeat) return;
+  if (won) {
+    if (key === "r") reset();
+    return;
+  }
+  if (key === " ") pulse = 2.4;
+  if (key === "e") {
+    if (Math.hypot(player.x - dog.x, player.y - dog.y) < 66) {
+      dog.friend = true;
+      effects.push({x: dog.x, y: dog.y - 12, life: 1.5, max: 1.5, text: "♥", color: "#efb2b0"});
+      message("A new friend! The dog will walk with you.");
+    } else {
+      message("Walk close to the dog, then press E to pet.");
+    }
+  }
+});
+window.addEventListener("keyup", e => keys.delete(e.key.toLowerCase()));
+window.addEventListener("blur", () => keys.clear());
+
+function update(dt) {
+  if (won) return;
+  time += dt;
+  pulse = Math.max(0, pulse - dt);
+  noticeLife = Math.max(0, noticeLife - dt);
+
+  let dx = Number(keys.has("d") || keys.has("arrowright")) -
+           Number(keys.has("a") || keys.has("arrowleft"));
+  let dy = Number(keys.has("s") || keys.has("arrowdown")) -
+           Number(keys.has("w") || keys.has("arrowup"));
+  const length = Math.hypot(dx, dy);
+  player.moving = length > 0;
+  if (length) {
+    player.x += dx / length * 155 * dt;
+    player.y += dy / length * 155 * dt;
+    if (dx) player.facing = Math.sign(dx);
+  }
+  player.x = Math.max(16, Math.min(W - 16, player.x));
+  player.y = Math.max(23, Math.min(H - 16, player.y));
+
+  const target = dog.friend
+    ? {x: player.x - player.facing * 35, y: player.y + 14}
+    : {x: 582 + Math.sin(time * 0.16) * 70, y: 428 + Math.sin(time * 0.22) * 36};
+  dx = target.x - dog.x;
+  dy = target.y - dog.y;
+  const distance = Math.hypot(dx, dy);
+  dog.moving = distance > 8;
+  if (dog.moving) {
+    const step = Math.min(distance - 8, (dog.friend ? 135 : 29) * dt);
+    dog.x += dx / distance * step;
+    dog.y += dy / distance * step;
+    if (Math.abs(dx) > 2) dog.facing = Math.sign(dx);
+  }
+  dog.x = Math.max(26, Math.min(W - 26, dog.x));
+  dog.y = Math.max(28, Math.min(H - 28, dog.y));
+
+  effects = effects.filter(e => (e.life -= dt) > 0);
+  for (const f of flies) {
+    if (f.caught) continue;
+    positionFly(f);
+    if (Math.hypot(player.x - f.x, player.y - f.y) <= player.r + 6) {
+      f.caught = true;
+      caught++;
+      effects.push({x: f.x, y: f.y, life: 1, max: 1, text: "+1", color: "#f4edab"});
+      if (caught === TOTAL) {
+        won = true;
+        keys.clear();
+        break;
+      }
+    }
+  }
+}
+
+function ellipse(x, y, rx, ry, color) {
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2);
+  ctx.fill();
+}
+function circle(x, y, r, color) {
+  ellipse(x, y, r, r, color);
+}
+function line(x1, y1, x2, y2, color, width = 1) {
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.stroke();
+}
+function text(str, x, y, size, color, align = "left") {
+  ctx.font = `${size}px system-ui, sans-serif`;
+  ctx.fillStyle = color;
+  ctx.textAlign = align;
+  ctx.fillText(str, x, y);
+}
+function panel(x, y, w, h, radius, color) {
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, radius);
+  ctx.fill();
+}
+
+function drawMeadow() {
+  const sky = ctx.createLinearGradient(0, 0, 0, H);
+  sky.addColorStop(0, "#334957");
+  sky.addColorStop(0.36, "#344e4b");
+  sky.addColorStop(1, "#263f3c");
+  ctx.fillStyle = sky;
+  ctx.fillRect(0, 0, W, H);
+
+  // Soft patches of ground, with no solid obstacles.
+  ellipse(390, 340, 305, 183, "#6680610b");
+  ellipse(661, 258, 133, 147, "#86916b09");
+  ellipse(94, 472, 79, 55, "#213c39");
+  ellipse(91, 472, 70, 46, "#385763");
+  ellipse(91, 469, 62, 37, "#3e606a");
+  for (let i = 0; i < 5; i++) {
+    const x = 52 + i * 17;
+    line(x, 451 + i * 8, x + 22 + Math.sin(time + i) * 3, 451 + i * 8, "#87a7ac35");
+  }
+  ellipse(66, 480, 11, 5, "#688270");
+  ellipse(121, 452, 9, 4, "#688270");
+  circle(122, 449, 3, "#b7a2b4");
+
+  for (const g of grass) {
+    if (Math.hypot((g.x - 91) / 1.5, g.y - 472) < 46) continue;
+    const sway = Math.sin(time * 1.3 + g.x) * 1.3;
+    line(g.x, g.y, g.x - 3 + sway, g.y - g.size, g.color);
+    line(g.x, g.y, g.x + 3 + sway, g.y - g.size * 0.8, g.color);
+  }
+  for (const f of flowers) {
+    if (f.x < 165 && f.y > 417) continue;
+    line(f.x, f.y + 5, f.x, f.y, "#6e876b");
+    circle(f.x - 2, f.y, 2, f.color);
+    circle(f.x + 2, f.y, 2, f.color);
+    circle(f.x, f.y - 2, 2, f.color);
+    circle(f.x, f.y, 1.3, "#d9ca96");
+  }
+
+  const shade = ctx.createRadialGradient(400, 310, 150, 400, 310, 480);
+  shade.addColorStop(0, "#111c2600");
+  shade.addColorStop(1, "#111c2648");
+  ctx.fillStyle = shade;
+  ctx.fillRect(0, 0, W, H);
+}
+
+function drawDog() {
+  ctx.save();
+  ctx.translate(dog.x, dog.y);
+  ellipse(0, 10, 20, 7, "#102e3455");
+  ctx.scale(dog.facing, 1);
+  const walk = dog.moving ? Math.sin(time * 13) * 2 : 0;
+  line(-12, -2, -23, -10 + Math.sin(time * (dog.friend ? 12 : 4)) * 4, "#c3a180", 5);
+  ellipse(-7, 8 + walk, 4, 6, "#aa896d");
+  ellipse(9, 8 - walk, 4, 6, "#aa896d");
+  ellipse(-2, 0, 16, 10, "#cfb08d");
+  circle(12, -5, 10, "#dec4a0");
+  ellipse(7, -10, 5, 8, "#967759");
+  ellipse(20, -2, 6, 4, "#e3cbaa");
+  circle(24, -4, 2.3, "#303b3c");
+  circle(15, -8, 1.7, "#303b3c");
+  line(8, 3, 15, 4, "#88b9b2", 3);
+  ctx.restore();
+}
+
+function drawPlayer() {
+  const {x, y} = player;
+  const bob = player.moving ? Math.sin(time * 14) * 1.5 : 0;
+  ellipse(x, y + 11, 15, 6, "#10283077");
+  ellipse(x - 5, y + 10 + bob, 4, 5, "#25303d");
+  ellipse(x + 5, y + 10 - bob, 4, 5, "#25303d");
+  panel(x - 10, y - 9 + bob, 20, 20, 7, "#b6bca5");
+  circle(x, y - 13 + bob, 8, "#e2ba94");
+  ellipse(x, y - 19 + bob, 14, 4, "#caa678");
+  ellipse(x, y - 23 + bob, 9, 6, "#d7b785");
+  line(x - 7, y - 6 + bob, x + 7, y - 6 + bob, "#cf8d79", 4);
+  line(x + 6, y - 5 + bob, x + 10, y + 2 + bob, "#cf8d79", 4);
+
+  // A tiny lantern warms as the fireflies gather.
+  const lx = x + 15, ly = y + 4 + bob;
+  const glow = ctx.createRadialGradient(lx, ly, 0, lx, ly, 32 + caught * 3);
+  glow.addColorStop(0, "#efd99335");
+  glow.addColorStop(1, "#efd99300");
+  circle(lx, ly, 32 + caught * 3, glow);
+  panel(lx - 4, ly - 5, 8, 11, 2, "#d9bd7c");
+  panel(lx - 2, ly - 3, 4, 6, 1, "#fff1b1");
+}
+
+function drawGuidance() {
+  if (pulse <= 0 || won) return;
+  const nearest = flies.filter(f => !f.caught).reduce((best, f) =>
+    !best || Math.hypot(f.x - player.x, f.y - player.y) <
+             Math.hypot(best.x - player.x, best.y - player.y) ? f : best, null);
+  if (!nearest) return;
+  ctx.save();
+  ctx.globalAlpha = Math.min(1, pulse);
+  ctx.setLineDash([2, 10]);
+  ctx.lineDashOffset = -time * 18;
+  line(player.x, player.y, nearest.x, nearest.y, "#e6dea273", 2);
+  ctx.setLineDash([]);
+  ctx.strokeStyle = "#e9e2aa65";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.arc(nearest.x, nearest.y, 17 + Math.sin(time * 4) * 3, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function draw() {
+  drawMeadow();
+  drawGuidance();
+
+  for (const f of flies) {
+    if (f.caught) continue;
+    const r = 20 + Math.sin(time * 3 + f.phase) * 5;
+    const glow = ctx.createRadialGradient(f.x, f.y, 0, f.x, f.y, r);
+    glow.addColorStop(0, "#eff5a982");
+    glow.addColorStop(0.3, "#dceb8b30");
+    glow.addColorStop(1, "#dceb8b00");
+    circle(f.x, f.y, r, glow);
+    ellipse(f.x - 4, f.y - 2, 3, 1.7, "#cfe3c477");
+    ellipse(f.x + 4, f.y - 2, 3, 1.7, "#cfe3c477");
+    circle(f.x, f.y, 3.5, "#f0f3b3");
+    circle(f.x - 0.6, f.y - 0.7, 1.5, "#ffffe5");
+  }
+
+  if (dog.y < player.y) { drawDog(); drawPlayer(); }
+  else { drawPlayer(); drawDog(); }
+
+  for (const e of effects) {
+    const progress = 1 - e.life / e.max;
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, e.life * 3);
+    text(e.text, e.x, e.y - 12 - progress * 25, 18, e.color, "center");
+    for (let i = 0; i < 6; i++) {
+      const angle = i * Math.PI / 3;
+      circle(e.x + Math.cos(angle) * progress * 28,
+             e.y + Math.sin(angle) * progress * 28,
+             2 * (1 - progress), e.color);
+    }
+    ctx.restore();
+  }
+
+  panel(20, 20, 760, 69, 12, "#182c35c9");
+  text("FIREFLY MEADOW", 38, 46, 18, "#edf0d5");
+  text("A little light, a quiet evening.", 38, 69, 12, "#a8bcba");
+  text(`Fireflies: ${caught} / ${TOTAL}`, 757, 48, 18, "#edf0b8", "right");
+  for (let i = 0; i < TOTAL; i++) {
+    circle(644 + i * 15, 68, 3, i < caught ? "#e7eaaa" : "#536660");
+  }
+
+  if (!won && Math.hypot(player.x - dog.x, player.y - dog.y) < 66) {
+    panel(dog.x - 42, dog.y - 49, 84, 23, 8, "#1a2d35d9");
+    text("E · pet dog", dog.x, dog.y - 33, 11, "#e9dfc4", "center");
+  }
+
+  if (noticeLife > 0) {
+    panel(135, 507, 530, 28, 10, "#182c35dc");
+    text(notice, 400, 526, 13, "#e3e8cd", "center");
+  }
+  panel(20, 549, 760, 34, 10, "#182c35d9");
+  text("Catch all eight · WASD / arrows to walk     Space: lantern hint     E: pet & befriend dog",
+       400, 571, 12, "#c5d1c4", "center");
+
+  if (won) {
+    ctx.fillStyle = "#10212bc4";
+    ctx.fillRect(0, 0, W, H);
+    panel(141, 184, 518, 230, 20, "#263e45");
+    ctx.strokeStyle = "#e6e6b52b";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    for (let i = 0; i < TOTAL; i++) {
+      circle(295 + i * 30, 230, 4, "#e8edaa");
+    }
+    text("All fireflies caught!", 400, 282, 32, "#f0efd0", "center");
+    text("You win! The meadow glows a little brighter.", 400, 316, 16, "#b8cdbe", "center");
+    text("Press R to wander again", 400, 372, 16, "#eddda8", "center");
+  }
+}
+
+reset();
+let previous = performance.now();
+function frame(now) {
+  const dt = Math.min((now - previous) / 1000, 0.04);
+  previous = now;
+  update(dt);
+  draw();
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

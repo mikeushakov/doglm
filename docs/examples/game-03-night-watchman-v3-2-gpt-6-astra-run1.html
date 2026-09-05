@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Night Watchman</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+  body {
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    background: #090f16;
+    color: #dce7e9;
+    font-family: system-ui, sans-serif;
+  }
+  canvas {
+    display: block;
+    width: min(800px, 100vw);
+    height: auto;
+    border: 1px solid #2a3943;
+    border-radius: 12px;
+    box-shadow: 0 24px 90px #0008;
+  }
+</style>
+</head>
+<body>
+<canvas id="game" width="800" height="600" aria-label="Night Watchman. Move with WASD or arrow keys. Stay near each door for two seconds. Hold Shift to jog, F to toggle your flashlight, and Space to pet your dog."></canvas>
+<script>
+"use strict";
+
+const canvas = document.getElementById("game");
+const ctx = canvas.getContext("2d");
+const keys = new Set();
+const TOTAL = 4;
+const CHECK_RADIUS = 54;
+const walls = [
+  { x: 32, y: 100, w: 736, h: 14 },
+  { x: 32, y: 530, w: 736, h: 14 },
+  { x: 32, y: 100, w: 14, h: 444 },
+  { x: 754, y: 100, w: 14, h: 444 },
+  { x: 390, y: 114, w: 16, h: 116 },
+  { x: 46, y: 286, w: 188, h: 16 },
+  { x: 566, y: 286, w: 188, h: 16 },
+  { x: 250, y: 395, w: 14, h: 135 },
+  { x: 536, y: 395, w: 14, h: 135 }
+];
+const furniture = [
+  { x: 285, y: 150, w: 60, h: 34, type: "desk" },
+  { x: 469, y: 157, w: 38, h: 38, type: "crate" },
+  { x: 169, y: 470, w: 36, h: 36, type: "crate" },
+  { x: 611, y: 478, w: 66, h: 28, type: "desk" }
+];
+const solids = [...walls, ...furniture];
+let player, dog, doors, hearts, won, flashlight, message, messageTime;
+let clock = 0;
+let lastTime = 0;
+let petCooldown = 0;
+
+function reset() {
+  player = { x: 400, y: 487, r: 11, angle: -Math.PI / 2 };
+  dog = { x: 433, y: 500, r: 8, angle: -Math.PI / 2, happy: 0 };
+  doors = [
+    { x: 180, y: 107, px: 180, py: 149, angle: 0, name: "ARCHIVE" },
+    { x: 635, y: 107, px: 635, py: 149, angle: 0, name: "OFFICE" },
+    { x: 39, y: 417, px: 81, py: 417, angle: Math.PI / 2, name: "STORAGE" },
+    { x: 761, y: 417, px: 719, py: 417, angle: Math.PI / 2, name: "WORKSHOP" }
+  ].map(d => ({ ...d, checked: false, progress: 0, popup: 0 }));
+  hearts = [];
+  won = false;
+  flashlight = true;
+  message = "A quiet building. A good dog. Four doors to check.";
+  messageTime = 5;
+  petCooldown = 0;
+  keys.clear();
+}
+
+window.addEventListener("keydown", e => {
+  const key = e.key.toLowerCase();
+  if (["arrowup", "arrowdown", "arrowleft", "arrowright", " ", "shift"].includes(key))
+    e.preventDefault();
+  if (won) {
+    if (key === "r" && !e.repeat) reset();
+    return;
+  }
+  keys.add(key);
+  if (e.repeat) return;
+  if (key === "f") flashlight = !flashlight;
+  if (key === " " && petCooldown <= 0) {
+    if (Math.hypot(player.x - dog.x, player.y - dog.y) < 66) {
+      dog.happy = 3;
+      petCooldown = 0.8;
+      for (let i = 0; i < 4; i++) {
+        hearts.push({
+          x: dog.x + (Math.random() - 0.5) * 26,
+          y: dog.y - 12, life: 1.5 + i * 0.15, drift: (Math.random() - 0.5) * 15
+        });
+      }
+      message = "Good dog. Best partner on the night shift.";
+    } else {
+      message = "Get a little closer to your dog to give them a pat.";
+    }
+    messageTime = 2.5;
+  }
+});
+window.addEventListener("keyup", e => keys.delete(e.key.toLowerCase()));
+window.addEventListener("blur", () => {
+  keys.clear();
+  for (const door of doors) if (!door.checked) door.progress = 0;
+});
+
+function collides(x, y, radius) {
+  if (x - radius < 0 || x + radius > 800 || y - radius < 0 || y + radius > 600)
+    return true;
+  return solids.some(s => {
+    const nx = Math.max(s.x, Math.min(x, s.x + s.w));
+    const ny = Math.max(s.y, Math.min(y, s.y + s.h));
+    return (x - nx) ** 2 + (y - ny) ** 2 < radius ** 2;
+  });
+}
+
+function move(body, dx, dy) {
+  // Small, axis-separated steps prevent tunneling and allow wall sliding.
+  const steps = Math.max(1, Math.ceil(Math.hypot(dx, dy) / 4));
+  for (let i = 0; i < steps; i++) {
+    if (!collides(body.x + dx / steps, body.y, body.r)) body.x += dx / steps;
+    if (!collides(body.x, body.y + dy / steps, body.r)) body.y += dy / steps;
+  }
+}
+
+function update(dt) {
+  if (won) return;
+  clock += dt;
+  messageTime = Math.max(0, messageTime - dt);
+  petCooldown = Math.max(0, petCooldown - dt);
+  dog.happy = Math.max(0, dog.happy - dt);
+
+  let dx = Number(keys.has("d") || keys.has("arrowright")) -
+           Number(keys.has("a") || keys.has("arrowleft"));
+  let dy = Number(keys.has("s") || keys.has("arrowdown")) -
+           Number(keys.has("w") || keys.has("arrowup"));
+  const length = Math.hypot(dx, dy);
+  if (length) {
+    dx /= length;
+    dy /= length;
+    player.angle = Math.atan2(dy, dx);
+    const speed = keys.has("shift") ? 225 : 145;
+    move(player, dx * speed * dt, dy * speed * dt);
+  }
+
+  const distance = Math.hypot(player.x - dog.x, player.y - dog.y);
+  const followDistance = dog.happy > 0 ? 24 : 35;
+  if (distance > followDistance) {
+    dog.angle = Math.atan2(player.y - dog.y, player.x - dog.x);
+    const step = Math.min(distance - followDistance, 190 * dt);
+    move(dog, Math.cos(dog.angle) * step, Math.sin(dog.angle) * step);
+  }
+
+  for (const h of hearts) {
+    h.life -= dt;
+    h.y -= 22 * dt;
+    h.x += h.drift * dt;
+  }
+  hearts = hearts.filter(h => h.life > 0);
+
+  for (const door of doors) {
+    door.popup = Math.max(0, door.popup - dt);
+    if (door.checked) continue;
+    const nearby = Math.hypot(player.x - door.x, player.y - door.y) <= CHECK_RADIUS;
+    door.progress = nearby ? Math.min(2, door.progress + dt) : 0;
+    if (door.progress >= 2) {
+      door.checked = true;
+      door.popup = 1.8;
+      if (doors.every(d => d.checked)) {
+        won = true;
+        keys.clear();
+        return;
+      }
+    }
+  }
+}
+
+function box(x, y, w, h, color, radius = 0) {
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.roundRect(x, y, w, h, radius);
+  ctx.fill();
+}
+
+function text(value, x, y, size = 12, color = "#c2d0d4", align = "left", weight = 400) {
+  ctx.font = `${weight} ${size}px system-ui, sans-serif`;
+  ctx.textAlign = align;
+  ctx.textBaseline = "middle";
+  ctx.fillStyle = color;
+  ctx.fillText(value, x, y);
+}
+
+function circle(x, y, r, color) {
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.fill();
+}
+
+function drawWorld() {
+  box(0, 0, 800, 600, "#101a24");
+  box(32, 100, 736, 444, "#172730", 5);
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(46, 114, 708, 416);
+  ctx.clip();
+
+  ctx.strokeStyle = "#20313a";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let x = 46; x < 755; x += 32) {
+    ctx.moveTo(x, 114); ctx.lineTo(x, 530);
+  }
+  for (let y = 114; y < 530; y += 32) {
+    ctx.moveTo(46, y); ctx.lineTo(754, y);
+  }
+  ctx.stroke();
+
+  const glow = ctx.createRadialGradient(player.x, player.y, 5, player.x, player.y, 100);
+  glow.addColorStop(0, "#d5dc8c12");
+  glow.addColorStop(1, "#d5dc8c00");
+  ctx.fillStyle = glow;
+  ctx.fillRect(46, 114, 708, 416);
+
+  if (flashlight) {
+    const light = ctx.createRadialGradient(player.x, player.y, 0, player.x, player.y, 180);
+    light.addColorStop(0, "#f9df932f");
+    light.addColorStop(1, "#f9df9300");
+    ctx.fillStyle = light;
+    ctx.beginPath();
+    ctx.moveTo(player.x, player.y);
+    ctx.arc(player.x, player.y, 180, player.angle - 0.46, player.angle + 0.46);
+    ctx.closePath();
+    ctx.fill();
+  }
+
+  doors.forEach(d => {
+    if (d.checked) return;
+    ctx.strokeStyle = d.progress > 0 ? "#eed29770" : "#d5b17720";
+    ctx.setLineDash([3, 5]);
+    ctx.beginPath();
+    ctx.arc(d.x, d.y, CHECK_RADIUS, 0, Math.PI * 2);
+    ctx.stroke();
+  });
+  ctx.setLineDash([]);
+  ctx.restore();
+
+  text("ARCHIVE", 175, 244, 11, "#50656e", "center", 600);
+  text("OFFICE", 632, 244, 11, "#50656e", "center", 600);
+  text("STORAGE", 145, 351, 11, "#50656e", "center", 600);
+  text("WORKSHOP", 653, 351, 11, "#50656e", "center", 600);
+  text("NIGHT ENTRANCE", 400, 521, 9, "#67818a", "center", 600);
+  text("↑", 400, 450, 22, "#3c535b", "center");
+
+  for (const wall of walls) {
+    box(wall.x, wall.y + 5, wall.w, wall.h, "#080f1670", 2);
+    box(wall.x, wall.y, wall.w, wall.h, "#344651", 2);
+    box(wall.x + 1, wall.y, wall.w - 2, 2, "#4b606a", 1);
+  }
+
+  // A painted entrance threshold, not an exit.
+  box(370, 530, 60, 8, "#537579", 2);
+  for (let x = 374; x < 428; x += 9) box(x, 530, 2, 8, "#22343e");
+
+  for (const f of furniture) {
+    box(f.x + 3, f.y + 5, f.w, f.h, "#09121b70", 3);
+    box(f.x, f.y, f.w, f.h, f.type === "desk" ? "#3c5057" : "#4d4d43", 3);
+    box(f.x + 3, f.y + 3, f.w - 6, 2, "#ffffff12");
+    if (f.type === "desk") {
+      box(f.x + 9, f.y + 7, 16, 12, "#83928d", 1);
+      box(f.x + 35, f.y + 8, 14, 9, "#182b33", 1);
+    } else {
+      ctx.strokeStyle = "#75715a";
+      ctx.strokeRect(f.x + 5, f.y + 5, f.w - 10, f.h - 10);
+      ctx.beginPath();
+      ctx.moveTo(f.x + 6, f.y + 6);
+      ctx.lineTo(f.x + f.w - 6, f.y + f.h - 6);
+      ctx.stroke();
+    }
+  }
+}
+
+function drawDoor(d, index) {
+  const color = d.checked ? "#80deae" : "#ec8277";
+  ctx.save();
+  ctx.translate(d.x, d.y);
+  ctx.rotate(d.angle);
+  box(-32, -7, 64, 14, "#0a151e", 2);
+  box(-28, -5, 56, 10, d.checked ? "#3c685d" : "#73594a", 2);
+  box(-25, -4, 50, 2, "#ffffff20");
+  circle(19, 2, 2, "#e2c48e");
+  ctx.shadowBlur = 10;
+  ctx.shadowColor = color;
+  circle(-39, 0, 3.5, color);
+  ctx.restore();
+
+  circle(d.px, d.py, 13, d.checked ? "#25473e" : "#263841");
+  text(d.checked ? "✓" : String(index + 1), d.px, d.py, 12, color, "center", 700);
+
+  if (!d.checked && d.progress > 0) {
+    box(d.px - 26, d.py + 21, 52, 6, "#09131b", 3);
+    box(d.px - 26, d.py + 21, 52 * d.progress / 2, 6, "#eed297", 3);
+    text("Checking…", d.px, d.py + 39, 10, "#eed297", "center");
+  }
+  if (d.popup > 0) {
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, d.popup * 2);
+    text("Checked!", d.px, d.py + 31 - (1.8 - d.popup) * 9, 12, "#80deae", "center", 600);
+    ctx.restore();
+  }
+}
+
+function drawDog() {
+  ctx.save();
+  ctx.translate(dog.x, dog.y);
+  circle(1, 4, 12, "#00000035");
+  ctx.rotate(dog.angle);
+  const wag = Math.sin(clock * (dog.happy > 0 ? 22 : 9)) * (dog.happy > 0 ? 0.8 : 0.3);
+  ctx.strokeStyle = "#bd905d";
+  ctx.lineWidth = 4;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(-8, 0);
+  ctx.lineTo(-17, Math.sin(wag) * 10);
+  ctx.stroke();
+  box(-9, -6, 17, 12, "#c49c69", 6);
+  box(2, -7, 3, 14, "#72b3a5", 2);
+  circle(9, 0, 7, "#dbb580");
+  box(5, -9, 7, 5, "#896443", 3);
+  box(5, 4, 7, 5, "#896443", 3);
+  circle(15, 0, 2.5, "#26313a");
+  ctx.restore();
+
+  for (const h of hearts) {
+    ctx.save();
+    ctx.globalAlpha = Math.min(1, h.life);
+    text("♥", h.x, h.y, 15, "#efadac", "center");
+    ctx.restore();
+  }
+}
+
+function drawPlayer() {
+  ctx.save();
+  ctx.translate(player.x, player.y);
+  circle(0, 5, 14, "#00000045");
+  ctx.rotate(player.angle);
+  box(-6, -11, 12, 22, "#577e94", 5);
+  box(2, 6, 10, 5, "#bdccd0", 2);
+  box(9, 6, 4, 5, flashlight ? "#f2d69a" : "#566269", 1);
+  circle(1, 0, 8, "#d2b48d");
+  circle(-2, 0, 9, "#263f55");
+  box(2, -8, 4, 16, "#476b83", 2);
+  box(3, -3, 3, 6, "#ecd298", 1);
+  ctx.restore();
+}
+
+function drawHUD() {
+  const remaining = TOTAL - doors.filter(d => d.checked).length;
+  text("NIGHT WATCHMAN", 32, 33, 23, "#e5ebea", "left", 750);
+  text("One floor. Four doors. Take your time.", 33, 62, 12, "#8da3ae");
+
+  text("DOORS REMAINING", 768, 25, 10, "#8da3ae", "right", 600);
+  text(`${remaining} / 4`, 768, 50, 24, "#eed297", "right", 650);
+  doors.forEach((d, i) => circle(686 + i * 24, 75, 3, d.checked ? "#80deae" : "#ec8277"));
+
+  if (messageTime > 0) {
+    box(181, 312, 438, 27, "#0d1822df", 6);
+    text(message, 400, 326, 11, "#b8cacd", "center");
+  }
+
+  text("WASD / ARROWS  Move     •     Stay by a door for 2 seconds to check it",
+    400, 565, 12, "#bacbd0", "center");
+  text(`SHIFT  Jog     ·     F  Flashlight ${flashlight ? "on" : "off"}     ·     SPACE  Pet your dog`,
+    400, 585, 11, "#79939f", "center");
+}
+
+function drawVictory() {
+  box(0, 0, 800, 600, "#071019d9");
+  box(169, 180, 462, 242, "#1a2b35", 16);
+  ctx.strokeStyle = "#45655f";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.roundRect(169, 180, 462, 242, 16);
+  ctx.stroke();
+
+  circle(400, 223, 22, "#2e5146");
+  text("✓", 400, 223, 26, "#91e3b7", "center", 700);
+  text("Shift complete!", 400, 272, 32, "#ecf0e8", "center", 750);
+  text("All doors checked. Everything is safe and sound.", 400, 310, 14, "#a9bec3", "center");
+  text("Time for you and your dog to head home.", 400, 335, 12, "#819ba5", "center");
+  box(317, 365, 166, 34, "#e7cc97", 7);
+  text("R  ·  Start another round", 400, 382, 12, "#192630", "center", 650);
+}
+
+function frame(now) {
+  const dt = lastTime ? Math.min((now - lastTime) / 1000, 0.04) : 0;
+  lastTime = now;
+  update(dt);
+  drawWorld();
+  doors.forEach(drawDoor);
+  drawDog();
+  drawPlayer();
+  drawHUD();
+  if (won) drawVictory();
+  requestAnimationFrame(frame);
+}
+
+reset();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
